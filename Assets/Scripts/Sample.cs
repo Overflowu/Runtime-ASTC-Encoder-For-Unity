@@ -26,11 +26,10 @@ public class Sample : MonoBehaviour
         }
 
         byte[] fileData = inputTexture.EncodeToASTC();
-        string filePath = Path.Combine(Application.dataPath, "outputTexture.astc");
-        using (FileStream fs = File.OpenWrite(filePath))
+        if (fileData != null)
         {
-            fs.Write(fileData);
-            fs.Close();
+            string filePath = Path.Combine(Application.dataPath, "outputTexture.astc");
+            File.WriteAllBytes(filePath, fileData);
         }
     }
 }

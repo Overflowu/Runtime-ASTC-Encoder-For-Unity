@@ -338,8 +338,8 @@ namespace Aperture.Astcenc.Runtime
             output = Marshal.AllocHGlobal(total);
             size = total;
 
-            int elementReaded = 0;
-            int byteWrited = 0;
+            int elementsRead = 0;
+            int bytesWritten = 0;
 
             try
             {
@@ -350,7 +350,7 @@ namespace Aperture.Astcenc.Runtime
                     int length = CalculateMipByteLength(mipmapWidth, mipmapHeight, blockX, blockY);
 
                     int count = mipmapWidth * mipmapHeight;
-                    NativeSlice<T> mipmapSlice = raw.Slice(elementReaded, count);
+                    NativeSlice<T> mipmapSlice = raw.Slice(elementsRead, count);
 
                     astcenc_image image = new astcenc_image();
                     try
@@ -364,7 +364,7 @@ namespace Aperture.Astcenc.Runtime
                             image.LoadFrom(mipmapSlice, mipmapWidth, mipmapHeight, bitness);
                         }
 
-                        astcenc_error status = context.CompressSingleImage(ref image, ref swizzle, output + byteWrited, length);
+                        astcenc_error status = context.CompressSingleImage(ref image, ref swizzle, output + bytesWritten, length);
                         if (status != astcenc_error.ASTCENC_SUCCESS)
                         {
                             throw new Exception(status.ToString());
@@ -375,8 +375,8 @@ namespace Aperture.Astcenc.Runtime
                         image.Release(ownsSliceMemory: !direct4Channel);
                     }
 
-                    elementReaded += count;
-                    byteWrited += length;
+                    elementsRead += count;
+                    bytesWritten += length;
                 }
             }
             catch (Exception ex)
@@ -395,7 +395,7 @@ namespace Aperture.Astcenc.Runtime
         private static astcenc_image[] SnapshotRawData<T>(NativeArray<T> raw, int width, int height, int bitness, int mipCount, bool direct4Channel) where T : unmanaged, IRawData
         {
             astcenc_image[] images = new astcenc_image[mipCount];
-            int elementReaded = 0;
+            int elementsRead = 0;
             try
             {
                 for (int i = 0; i < mipCount; i++)
@@ -403,7 +403,7 @@ namespace Aperture.Astcenc.Runtime
                     int mipmapWidth = Math.Max(1, width >> i);
                     int mipmapHeight = Math.Max(1, height >> i);
                     int count = mipmapWidth * mipmapHeight;
-                    NativeSlice<T> mipmapSlice = raw.Slice(elementReaded, count);
+                    NativeSlice<T> mipmapSlice = raw.Slice(elementsRead, count);
 
                     astcenc_image image = new astcenc_image();
                     if (direct4Channel)
@@ -415,7 +415,7 @@ namespace Aperture.Astcenc.Runtime
                         image.LoadFrom(mipmapSlice, mipmapWidth, mipmapHeight, bitness);
                     }
                     images[i] = image;
-                    elementReaded += count;
+                    elementsRead += count;
                 }
                 return images;
             }
@@ -500,19 +500,19 @@ namespace Aperture.Astcenc.Runtime
             }
 
             IntPtr output = Marshal.AllocHGlobal(total);
-            int byteWrited = 0;
+            int bytesWritten = 0;
             try
             {
                 for (int i = 0; i < mipmaps.Length; i++)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     int length = CalculateMipByteLength((int)mipmaps[i].dim_x, (int)mipmaps[i].dim_y, blockX, blockY);
-                    astcenc_error status = context.CompressSingleImage(ref mipmaps[i], ref swizzle, output + byteWrited, length, cancellationToken);
+                    astcenc_error status = context.CompressSingleImage(ref mipmaps[i], ref swizzle, output + bytesWritten, length, cancellationToken);
                     if (status != astcenc_error.ASTCENC_SUCCESS)
                     {
                         throw new Exception(status.ToString());
                     }
-                    byteWrited += length;
+                    bytesWritten += length;
                 }
 
                 return new AstcRaw(output, total);

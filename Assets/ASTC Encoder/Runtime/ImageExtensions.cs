@@ -6,7 +6,7 @@ using Aperture.Astcenc.Runtime.NativeAPI;
 
 namespace Aperture.Astcenc.Runtime
 {
-    public static class ImageExtensions
+    internal static class ImageExtensions
     {
         private static astcenc_type GetDataType(int bitness)
         {
