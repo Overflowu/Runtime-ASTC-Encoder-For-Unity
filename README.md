@@ -20,8 +20,8 @@
   - 支持 24 种未压缩 `GraphicsFormat`，涵盖 **LDR（8-bit UNorm / sRGB、16-bit UNorm）** 与 **HDR（16-bit / 32-bit Float）**。
   - 支持完整 Mipmap 链逐级压缩（兼容非正方形纹理）。
 - **贴图类型与通道自动适配**：
-  - 普通贴图（`TextureType.Default`）：自动处理 `BGRA` 通道重排，对四通道贴图支持 `UseAlphaWeight` 误差加权。
-  - 法线贴图（`TextureType.Normal`）：自动启用 `MapNormal` 角度误差优化（不叠加 `UseAlphaWeight`），并按 `GGGR` 通道重排（同时兼容 RGBA 与 BGRA 输入）。
+  - 普通贴图（`TextureType.Default`）：自动处理 `BGRA` 通道重排；支持按需开启 `useAlphaWeight` 透明通道加权（自动设置 `a_scale_radius = 1` 防止双线性采样溢色，默认关闭以避免破坏 ORM / Mask 等通道打包贴图）。
+  - 法线贴图（`TextureType.Normal`）：自动启用 `MapNormal` 角度误差优化，并按 `GGGR` 通道重排（同时兼容 RGBA 与 BGRA 输入）。
 
 ---
 
@@ -200,20 +200,27 @@ public void SaveAsAstcFile(Texture2D inputTexture, string outputPath)
 | 方法 | 说明 |
 | :--- | :--- |
 | `Encoder.IsSupport(Texture texture)` | 检查纹理非空、满足 `isReadable` 且 `graphicsFormat` 受支持 |
-| `Texture2D.Compress(textureType, blockSize, quality, makeNoLongerReadable, threadCount)` | 压缩纹理并原地 `Reinitialize`、`LoadRawTextureData`、`Apply(false, ...)` |
-| `Texture2D.CompressTexture(textureType, blockSize, quality, threadCount)` | 同步压缩全部 Mipmap 至非托管内存，返回 `AstcRaw`（需 `Dispose()`） |
-| `Texture2D.CompressTextureAsync(textureType, blockSize, quality, threadCount)` | 主线程快照像素 + 后台多线程异步压缩，返回 `Task<AstcRaw>` |
+| `Texture2D.Compress(textureType, blockSize, quality, makeNoLongerReadable, threadCount, useAlphaWeight)` | 压缩纹理并原地 `Reinitialize`、`LoadRawTextureData`、`Apply(false, ...)` |
+| `Texture2D.CompressTexture(textureType, blockSize, quality, threadCount, useAlphaWeight)` | 同步压缩全部 Mipmap 至非托管内存，返回 `AstcRaw`（需 `Dispose()`） |
+| `Texture2D.CompressTextureAsync(textureType, blockSize, quality, threadCount, useAlphaWeight, cancellationToken)` | 主线程快照像素 + 后台线程创建上下文并多线程异步压缩，支持 `CancellationToken`（底层调用 `astcenc_compress_cancel`） |
 | `Texture2D.LoadRawTextureData(AstcRaw raw)` | 将 `AstcRaw` 中的压缩数据直接加载到目标 `Texture2D` |
-| `Texture2D.EncodeToASTC(textureType, blockSize, quality, threadCount)` | 仅压缩 Mip 0 并写入 16 字节标准 ASTC 文件头，返回托管 `byte[]` |
+| `Texture2D.EncodeToASTC(textureType, blockSize, quality, threadCount, useAlphaWeight)` | 仅压缩 Mip 0 并写入 16 字节标准 ASTC 文件头，返回托管 `byte[]` |
 
 ### `AstcContext`（可复用原生编码上下文）
 
 | 成员 | 说明 |
 | :--- | :--- |
-| `AstcContext.Create(graphicsFormat, textureType, blockSize, quality, threadCount)` | 创建可复用上下文（`threadCount <= 0` 自动选择线程数） |
+| `AstcContext.Create(graphicsFormat, textureType, blockSize, quality, threadCount, useAlphaWeight)` | 创建可复用上下文（`threadCount <= 0` 自动选择线程数；开启 `useAlphaWeight` 时自动设 `a_scale_radius = 1`） |
 | `context.CompressTexture(texture, textureType)` | 复用当前上下文同步压缩纹理 |
-| `context.CompressTextureAsync(texture, textureType)` | 复用当前上下文异步压缩纹理（任务完成前需保持上下文未释放） |
+| `context.CompressTextureAsync(texture, textureType, cancellationToken)` | 复用当前上下文异步压缩纹理（任务完成前需保持上下文未释放） |
 | `context.Dispose()` | 释放底层 `astcenc_context` 原生内存 |
+
+### `AstcRaw`（非托管压缩数据封装）
+
+- `Length`：压缩后总字节数
+- `IsDisposed`：是否已释放
+- `CopyTo(byte[] destination, int destinationOffset = 0)` / `ToArray()`：安全拷贝原始压缩字节到托管数组
+- `Dispose()`：释放底层非托管内存
 
 ### 枚举与配置参数
 
@@ -230,7 +237,7 @@ public void SaveAsAstcFile(Texture2D inputTexture, string outputPath)
 | :--- | :--- | :--- | :--- | :--- |
 | **LDR 8-bit sRGB** | `R8` / `R8G8` / `R8G8B8` / `R8G8B8A8` / `B8G8R8` / `B8G8R8A8` (`_SRGB`) | `ASTCENC_PRF_LDR_SRGB` | `U8`（4 通道零拷贝直传） | `RGBA_ASTC{N}X{N}_SRGB` |
 | **LDR 8-bit Linear** | `R8` / `R8G8` / `R8G8B8` / `R8G8B8A8` / `B8G8R8` / `B8G8R8A8` (`_UNorm`) | `ASTCENC_PRF_LDR` | `U8`（4 通道零拷贝直传） | `RGBA_ASTC{N}X{N}_UNorm` |
-| **LDR 16-bit Linear** | `R16` / `R16G16` / `R16G16B16` / `R16G16B16A16` (`_UNorm`) | `ASTCENC_PRF_LDR` | `F16`（归一化转换） | `RGBA_ASTC{N}X{N}_UNorm` |
+| **LDR 16-bit Linear** | `R16` / `R16G16` / `R16G16B16` / `R16G16B16A16` (`_UNorm`) | `ASTCENC_PRF_LDR` | `F32`（无损保留 16-bit 精度） | `RGBA_ASTC{N}X{N}_UNorm` |
 | **HDR 16-bit Float** | `R16` / `R16G16` / `R16G16B16` / `R16G16B16A16` (`_SFloat`) | `ASTCENC_PRF_HDR` | `F16`（4 通道零拷贝直传） | `RGBA_ASTC{N}X{N}_UFloat` |
 | **HDR 32-bit Float** | `R32` / `R32G32` / `R32G32B32` / `R32G32B32A32` (`_SFloat`) | `ASTCENC_PRF_HDR` | `F32`（4 通道零拷贝直传） | `RGBA_ASTC{N}X{N}_UFloat` |
 
@@ -243,7 +250,7 @@ flowchart TD
     A["Unity Texture2D (未压缩 / 可读)"] --> B["C# 封装层 (Encoder.cs / AstcContext.cs)"]
     B --> C["参数推导: BlockSize / Quality / Profile / Swizzle / Flags"]
     B --> D1["同步 4 通道: 零拷贝指针 (LoadFromDirect)"]
-    B --> D2["异步 / 非 4 通道: MemCpy 或无 GC 像素补齐 (ImageExtensions.cs + RawTexutureData.cs)"]
+    B --> D2["异步 / 非 4 通道: MemCpy 或无 GC 像素补齐 (ImageExtensions.cs + RawTextureData.cs)"]
     C --> E["P/Invoke 绑定层 (NativeAPI/astcenc_api.cs, v5.7.1 ABI)"]
     D1 --> E
     D2 --> E
@@ -255,23 +262,23 @@ flowchart TD
 
 ### 核心流程说明
 
-1. **上下文管理（`AstcContext`）**：通过 `astcenc_config_init` + `astcenc_context_alloc(..., parent_context: IntPtr.Zero)` 创建支持 `SelfDecompressOnly` 的原生上下文；支持多核并行压缩（`Parallel.For` 分配唯一 `thread_index`，小尺寸 Mipmap 自动退回单线程以避免调度开销），每次压缩后在 `finally` 中调用 `astcenc_compress_reset`。
+1. **上下文管理（`AstcContext`）**：通过 `astcenc_config_init` + `astcenc_context_alloc(..., parent_context: IntPtr.Zero)` 创建支持 `SelfDecompressOnly` 的原生上下文；支持多核并行压缩（`Parallel.For` 分配唯一 `thread_index`，小尺寸 Mipmap 自动退回单线程以避免调度开销）与 `CancellationToken` 取消（安全注册 `astcenc_compress_cancel`），每次压缩后在 `finally` 中调用 `astcenc_compress_reset`。
 2. **输出缓冲预分配**：按每级 `ceil(max(1, w >> i) / blockX) * ceil(max(1, h >> i) / blockY) * 16` 字节累加所有 Mipmap 总长度，一次性分配连续非托管内存。
 3. **像素传输优化**：
    - `RGBA8` / `RGBA16F` / `RGBA32F`（含 `BGRA8`，通道重排交由原生 `swizzle` 处理）内存布局已与 `astcenc_image` 对齐：同步模式直接传递 `NativeSlice` 只读指针（零拷贝），异步模式用 `UnsafeUtility.MemCpy` 整块快照。
-   - 1/2/3 通道与 16-bit UNorm 格式通过 `IRawData` 指针循环与 `Marshal.WriteInt16` / `WriteInt32` 写入 4 通道缓冲，零堆分配（缺失 RGB 补 `0`，缺失 Alpha 补 `1.0` / `0xFF`）。
+   - 1/2/3 通道与 16-bit UNorm 格式通过 `IRawData` 指针循环与 `Marshal.WriteInt16` / `WriteInt32` 写入 4 通道缓冲，零堆分配（缺失 RGB 补 `0`，缺失 Alpha 补 `1.0` / `0xFF`；16-bit UNorm 直接输出 `F32` 保留全部 16-bit 精度）。
 4. **`.astc` 导出**：`EncodeToASTC` 仅压缩 Mip 0，并通过静态方法 `AstcHeader.WriteTo` 直接写入 16 字节小端文件头（魔数 `0x5CA1AB13` + 3 字节块尺寸 + 3 × 3 字节 24-bit 图像尺寸），不产生额外的非托管头分配与 Finalizer 开销。
 
 ---
 
 ## 跨平台原生库自动构建（GitHub Actions）
 
-仓库内置跨平台自动构建工作流 [.github/workflows/build-native-plugins.yml](.github/workflows/build-native-plugins.yml)，可直接基于 `ThirdParty/astc-encoder` 子模块一次编出全部 5 个平台产物并校验导出符号：
+仓库内置跨平台自动构建工作流 [.github/workflows/build-native-plugins.yml](.github/workflows/build-native-plugins.yml)，可直接基于 `ThirdParty/astc-encoder` 子模块一次编出全部 5 个平台产物（Android `.so` 自动 Strip 调试符号并启用 16KB 页对齐）并校验导出符号：
 
 - **自动触发**：当更新 `ThirdParty/astc-encoder` 子模块或修改工作流文件并推送时，自动编译并打包为 `astcenc-unity-plugins-<version>` Artifact。
 - **手动触发并自动提交**：在 GitHub Actions 页面运行 `Build Native ASTC Encoder Plugins` 并勾选 `commit_binaries`，工作流会自动将编出的 5 个原生库通过 Git LFS 提交回当前分支的 `Assets/ASTC Encoder/Plugins/` 目录。
 
-> 升级上游 `astc-encoder` 子模块版本时，请对照 `ThirdParty/astc-encoder/Source/astcenc.h` 核对 `NativeAPI/` 中的结构体字段与函数签名是否发生 ABI 变更。
+> 升级上游 `astc-encoder` 子模块版本时，请对照 `ThirdParty/astc-encoder/Source/astcenc.h` 核对 `Aperture.Astcenc.Runtime.NativeAPI` 中的结构体字段与函数签名是否发生 ABI 变更。
 
 ---
 
@@ -285,7 +292,7 @@ flowchart TD
 ├── ThirdParty/
 │   └── astc-encoder/                      # ARM-software/astc-encoder v5.7.1 源码子模块
 ├── Assets/
-│   ├── ASTC Encoder/                      # Unity Package (com.aperture.astcenc)
+│   ├── ASTC Encoder/                      # Unity Package (com.aperture.astcenc v2.0.0)
 │   │   ├── package.json
 │   │   ├── LICENSE.md                     # MIT License
 │   │   ├── Third Party Notices.md         # ARM astc-encoder Apache-2.0 License
@@ -297,17 +304,17 @@ flowchart TD
 │   │   │   └── x64/astcenc-sse4.1-shared.dll
 │   │   └── Runtime/
 │   │       ├── Aperture.Astcenc.Runtime.asmdef
-│   │       ├── AstcContext.cs             # 可复用编码上下文（多线程 / 异步支持）
+│   │       ├── AstcContext.cs             # 可复用编码上下文（多线程 / 异步 / 取消支持）
 │   │       ├── Encoder.cs                 # 核心压缩流程与 Texture2D 扩展方法
 │   │       ├── AstcRaw.cs                 # 非托管 ASTC 压缩数据封装 (IDisposable)
 │   │       ├── AstcHeader.cs              # 16 字节标准 .astc 文件头工具
-│   │       ├── ImageExtensions.cs         # astcenc_image 零拷贝 / MemCpy / 像素转换
-│   │       ├── RawTexutureData.cs         # 16 种像素格式无 GC 写入结构体
+│   │       ├── ImageExtensions.cs         # astcenc_image 零拷贝 / MemCpy / 像素转换 (internal)
+│   │       ├── RawTextureData.cs          # 16 种像素格式无 GC 写入结构体
 │   │       ├── BlockSize.cs               # ASTC 块尺寸枚举
 │   │       ├── CompressQuality.cs         # 压缩质量预设枚举
 │   │       ├── TextureType.cs             # 贴图类型枚举 (Default / Normal)
 │   │       ├── CodecFlags.cs              # astcenc 编码标志位枚举
-│   │       └── NativeAPI/                 # astcenc 5.7.1 C API P/Invoke 绑定
+│   │       └── NativeAPI/                 # Aperture.Astcenc.Runtime.NativeAPI (v5.7.1 P/Invoke)
 │   │           ├── astcenc_api.cs
 │   │           ├── astcenc_config.cs
 │   │           ├── astcenc_error.cs
@@ -331,7 +338,7 @@ flowchart TD
 - **非托管内存管理**：直接调用 `CompressTexture` / `CompressTextureAsync` 返回的 `AstcRaw` 持有非托管内存，以及手动创建的 `AstcContext` 均需通过 `using` 或 `Dispose()` 及时释放。
 - **移动端性能建议**：运行时压缩大图建议使用 `CompressTextureAsync` 配合 `Fastest` / `Fast` 质量档位，避免阻塞主线程；批量同格式压缩请复用 `AstcContext`。
 - **异步压缩上下文生命周期**：使用 `context.CompressTextureAsync(...)` 时，请确保在返回的 `Task<AstcRaw>` 完成前不要释放该 `AstcContext`。
-- **通道打包贴图说明**：当前对 `TextureType.Default` 的四通道格式默认启用 `UseAlphaWeight`（按 Alpha 透明度加权 RGB 误差）；若压缩 ORM / Mask 等非透明度四通道贴图，请注意根据需求调整 `Encoder.GetFlags`。
+- **透明贴图加权**：对于带透明通道的 UI / Sprite / 植被贴图，建议传入 `useAlphaWeight: true`（自动配合 `a_scale_radius = 1` 减少线性采样边缘溢色）；对于 ORM / Mask 等通道打包贴图保持默认 `useAlphaWeight: false`。
 
 ---
 
