@@ -30,14 +30,28 @@ namespace Aperture.Astcenc.Runtime
         /// </summary>
         internal static unsafe void LoadFromDirect<T>(this ref astcenc_image image, NativeSlice<T> rawData, int width, int height, int bitness) where T : unmanaged
         {
+            if (image.data != IntPtr.Zero)
+            {
+                throw new InvalidOperationException("astcenc_image already holds allocated data; call Release() before rebinding.");
+            }
+
+            IntPtr slicePtr = (IntPtr)rawData.GetUnsafeReadOnlyPtr();
+            IntPtr dataPtr = Marshal.AllocHGlobal(IntPtr.Size);
+            try
+            {
+                Marshal.WriteIntPtr(dataPtr, 0, slicePtr);
+            }
+            catch
+            {
+                Marshal.FreeHGlobal(dataPtr);
+                throw;
+            }
+
             image.dim_x = (uint)width;
             image.dim_y = (uint)height;
             image.dim_z = 1;
             image.data_type = GetDataType(bitness);
-            image.data = Marshal.AllocHGlobal(IntPtr.Size);
-
-            IntPtr slicePtr = (IntPtr)rawData.GetUnsafeReadOnlyPtr();
-            Marshal.WriteIntPtr(image.data, 0, slicePtr);
+            image.data = dataPtr;
         }
 
         /// <summary>
@@ -142,22 +156,31 @@ namespace Aperture.Astcenc.Runtime
 
         private static IntPtr LoadData<T>(NativeSlice<T> raw, int bitness) where T : unmanaged, IRawData
         {
-            int bytes = bitness / 8;
-            IntPtr dataPtr = Marshal.AllocHGlobal(raw.Length * bytes * 4);
-            Copy(raw, dataPtr, bytes * 4);
-
-            return dataPtr;
+            int stride = (bitness / 8) * 4;
+            long byteCount = (long)raw.Length * stride;
+            IntPtr dataPtr = Marshal.AllocHGlobal((IntPtr)byteCount);
+            try
+            {
+                Copy(raw, dataPtr, stride);
+                return dataPtr;
+            }
+            catch
+            {
+                Marshal.FreeHGlobal(dataPtr);
+                throw;
+            }
         }
 
         private static unsafe void Copy<T>(NativeSlice<T> raw, IntPtr destPtr, int stride) where T : unmanaged, IRawData
         {
             int length = raw.Length;
+            long baseAddr = destPtr.ToInt64();
             if (raw.Stride == sizeof(T))
             {
                 T* srcPtr = (T*)raw.GetUnsafeReadOnlyPtr();
                 for (int i = 0; i < length; i++)
                 {
-                    srcPtr[i].WriteTo(destPtr + i * stride);
+                    srcPtr[i].WriteTo(new IntPtr(baseAddr + (long)i * stride));
                 }
             }
             else
@@ -165,7 +188,7 @@ namespace Aperture.Astcenc.Runtime
                 for (int i = 0; i < length; i++)
                 {
                     T pixel = raw[i];
-                    pixel.WriteTo(destPtr + i * stride);
+                    pixel.WriteTo(new IntPtr(baseAddr + (long)i * stride));
                 }
             }
         }
