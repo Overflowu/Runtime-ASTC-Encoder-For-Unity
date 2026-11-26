@@ -971,6 +971,7 @@ uint AstcGetCuratedSeed(uint idx)
 }
 
 // Fast heuristic to select the best 2-partition seed by minimizing intra-partition variance.
+// Evaluates 16 curated seeds in 4 batches of 4 to cut texture fetches by 4x without dynamic array indexing.
 uint AstcSelectBestSeed2P(uint baseX, uint baseY, uint effMode)
 {
     float4 mask = AstcChannelMask(effMode, false);
@@ -979,32 +980,66 @@ uint AstcSelectBestSeed2P(uint baseX, uint baseY, uint effMode)
     uint bestSeed = 17u;
     float bestScore = -1.0;
 
-    for (uint si = 0u; si < 16u; ++si)
+    for (uint batch = 0u; batch < 16u; batch += 4u)
     {
-        uint seed = AstcGetCuratedSeed(si);
-        float4 s0 = 0.0, s1 = 0.0;
-        float c0 = 0.0, c1 = 0.0;
+        uint seed0 = AstcGetCuratedSeed(batch + 0u);
+        uint seed1 = AstcGetCuratedSeed(batch + 1u);
+        uint seed2 = AstcGetCuratedSeed(batch + 2u);
+        uint seed3 = AstcGetCuratedSeed(batch + 3u);
+
+        float4 sumAll = 0.0;
+        float cntAll = 0.0;
+
+        float4 s1_0 = 0.0, s1_1 = 0.0, s1_2 = 0.0, s1_3 = 0.0;
+        float c1_0 = 0.0, c1_1 = 0.0, c1_2 = 0.0, c1_3 = 0.0;
 
         for (uint y = 0u; y < BLOCK_Y; ++y)
         {
             for (uint x = 0u; x < BLOCK_X; ++x)
             {
                 float imp;
-                float4 p = AstcFetchWorkingPixel(baseX, baseY, x, y, effMode, imp) * mask;
-                uint part = AstcSelectPartition2(seed, x, y, smallBlock);
-                if (part == 0u) { s0 += p * imp; c0 += imp; }
-                else            { s1 += p * imp; c1 += imp; }
+                float4 pw = AstcFetchWorkingPixel(baseX, baseY, x, y, effMode, imp) * mask * imp;
+                sumAll += pw;
+                cntAll += imp;
+
+                if (AstcSelectPartition2(seed0, x, y, smallBlock) != 0u) { s1_0 += pw; c1_0 += imp; }
+                if (AstcSelectPartition2(seed1, x, y, smallBlock) != 0u) { s1_1 += pw; c1_1 += imp; }
+                if (AstcSelectPartition2(seed2, x, y, smallBlock) != 0u) { s1_2 += pw; c1_2 += imp; }
+                if (AstcSelectPartition2(seed3, x, y, smallBlock) != 0u) { s1_3 += pw; c1_3 += imp; }
             }
         }
 
-        if (c0 < 0.5 || c1 < 0.5) continue;
-
-        // Maximizing ||s0||^2/c0 + ||s1||^2/c1 is mathematically identical to minimizing within-cluster variance!
-        float score = dot(s0, s0) / c0 + dot(s1, s1) / c1;
-        if (score > bestScore)
+        // Maximizing ||s0||^2/c0 + ||s1||^2/c1 is mathematically identical to minimizing within-cluster variance.
+        float c0_0 = cntAll - c1_0;
+        if (c0_0 >= 0.5 && c1_0 >= 0.5)
         {
-            bestScore = score;
-            bestSeed = seed;
+            float4 s0_0 = sumAll - s1_0;
+            float score = dot(s0_0, s0_0) / c0_0 + dot(s1_0, s1_0) / c1_0;
+            if (score > bestScore) { bestScore = score; bestSeed = seed0; }
+        }
+
+        float c0_1 = cntAll - c1_1;
+        if (c0_1 >= 0.5 && c1_1 >= 0.5)
+        {
+            float4 s0_1 = sumAll - s1_1;
+            float score = dot(s0_1, s0_1) / c0_1 + dot(s1_1, s1_1) / c1_1;
+            if (score > bestScore) { bestScore = score; bestSeed = seed1; }
+        }
+
+        float c0_2 = cntAll - c1_2;
+        if (c0_2 >= 0.5 && c1_2 >= 0.5)
+        {
+            float4 s0_2 = sumAll - s1_2;
+            float score = dot(s0_2, s0_2) / c0_2 + dot(s1_2, s1_2) / c1_2;
+            if (score > bestScore) { bestScore = score; bestSeed = seed2; }
+        }
+
+        float c0_3 = cntAll - c1_3;
+        if (c0_3 >= 0.5 && c1_3 >= 0.5)
+        {
+            float4 s0_3 = sumAll - s1_3;
+            float score = dot(s0_3, s0_3) / c0_3 + dot(s1_3, s1_3) / c1_3;
+            if (score > bestScore) { bestScore = score; bestSeed = seed3; }
         }
     }
 
