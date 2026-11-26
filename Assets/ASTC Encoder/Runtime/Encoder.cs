@@ -173,6 +173,7 @@ namespace Aperture.Astcenc.Runtime
         }
 
         public static bool IsGpuSupported => AstcGpuBackend.IsSupported;
+        public static bool IsCpuSupported => AstcCpuBackend.IsSupported;
 
         public static bool SupportsGpuDirectCopy(BlockSize blockSize, bool srgb = false, bool isHdr = false)
         {
