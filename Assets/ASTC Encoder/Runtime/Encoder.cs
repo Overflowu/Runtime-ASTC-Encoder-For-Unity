@@ -547,9 +547,165 @@ namespace Aperture.Astcenc.Runtime
             int destMip = 0,
             int destX = 0,
             int destY = 0,
-            bool useAlphaWeight = false)
+            bool useAlphaWeight = false,
+            int sourceSlice = 0,
+            int destSlice = 0)
         {
-            AstcGpuBackend.Encode(cmd, source, destination, textureType, blockSize, quality, sourceMip, destMip, destX, destY, useAlphaWeight);
+            AstcGpuBackend.Encode(cmd, source, destination, textureType, blockSize, quality, sourceMip, destMip, destX, destY, useAlphaWeight, sourceSlice, destSlice);
+        }
+
+        /// <summary>
+        /// Compresses all 6 faces (and optional mipmaps) of a <see cref="Cubemap"/> into a new ASTC-compressed <see cref="Cubemap"/> on the GPU with zero CPU readback.
+        /// </summary>
+        public static Cubemap CompressCubemap(this Cubemap source, AstcCompressOptions options)
+        {
+            if (source == null)
+            {
+                Debug.LogError("Source Cubemap is null.");
+                return null;
+            }
+            return AstcGpuBackend.CompressCubemap(source, options.TextureType, options.BlockSize, options.Quality, options.IncludeMipmaps, options.UseAlphaWeight);
+        }
+
+        /// <summary>
+        /// Compresses all slices (and optional mipmaps) of a <see cref="Texture2DArray"/> into a new ASTC-compressed <see cref="Texture2DArray"/> on the GPU with zero CPU readback.
+        /// </summary>
+        public static Texture2DArray CompressTexture2DArray(this Texture2DArray source, AstcCompressOptions options)
+        {
+            if (source == null)
+            {
+                Debug.LogError("Source Texture2DArray is null.");
+                return null;
+            }
+            return AstcGpuBackend.CompressTexture2DArray(source, options.TextureType, options.BlockSize, options.Quality, options.IncludeMipmaps, options.UseAlphaWeight);
+        }
+
+        /// <summary>
+        /// Compresses raw pixel bytes directly on the CPU without creating a Unity <see cref="Texture2D"/>.
+        /// Ideal for webcam feeds, procedural generators, and background-thread pipelines.
+        /// Call Dispose() on the returned <see cref="AstcRaw"/> after use.
+        /// </summary>
+        public static unsafe AstcRaw CompressRawPixels(
+            Unity.Collections.NativeArray<byte> rawPixels,
+            int width,
+            int height,
+            GraphicsFormat sourceFormat,
+            AstcCompressOptions options)
+        {
+            void* ptr = Unity.Collections.LowLevel.Unsafe.NativeArrayUnsafeUtility.GetUnsafeReadOnlyPtr(rawPixels);
+            return AstcCpuBackend.CompressRawPixels(
+                (IntPtr)ptr,
+                rawPixels.Length,
+                width,
+                height,
+                sourceFormat,
+                options.TextureType,
+                options.BlockSize,
+                options.Quality,
+                options.ThreadCount,
+                options.UseAlphaWeight,
+                options.UsePerceptual,
+                options.AlphaScaleRadius);
+        }
+
+        /// <summary>
+        /// Compresses a managed raw pixel byte array directly on the CPU without creating a Unity <see cref="Texture2D"/>.
+        /// Call Dispose() on the returned <see cref="AstcRaw"/> after use.
+        /// </summary>
+        public static unsafe AstcRaw CompressRawPixels(
+            byte[] rawPixels,
+            int width,
+            int height,
+            GraphicsFormat sourceFormat,
+            AstcCompressOptions options)
+        {
+            if (rawPixels == null || rawPixels.Length == 0)
+            {
+                Debug.LogError("Raw pixel array is null or empty.");
+                return null;
+            }
+
+            fixed (byte* ptr = rawPixels)
+            {
+                return AstcCpuBackend.CompressRawPixels(
+                    (IntPtr)ptr,
+                    rawPixels.Length,
+                    width,
+                    height,
+                    sourceFormat,
+                    options.TextureType,
+                    options.BlockSize,
+                    options.Quality,
+                    options.ThreadCount,
+                    options.UseAlphaWeight,
+                    options.UsePerceptual,
+                    options.AlphaScaleRadius);
+            }
+        }
+
+        /// <summary>
+        /// Asynchronously compresses raw pixel bytes on a background thread without creating a Unity <see cref="Texture2D"/>.
+        /// The input buffer is snapshotted before returning, so the caller may safely reuse or dispose it immediately.
+        /// </summary>
+        public static unsafe Task<AstcRaw> CompressRawPixelsAsync(
+            Unity.Collections.NativeArray<byte> rawPixels,
+            int width,
+            int height,
+            GraphicsFormat sourceFormat,
+            AstcCompressOptions options,
+            CancellationToken cancellationToken = default)
+        {
+            void* ptr = Unity.Collections.LowLevel.Unsafe.NativeArrayUnsafeUtility.GetUnsafeReadOnlyPtr(rawPixels);
+            return AstcCpuBackend.CompressRawPixelsAsync(
+                (IntPtr)ptr,
+                rawPixels.Length,
+                width,
+                height,
+                sourceFormat,
+                options.TextureType,
+                options.BlockSize,
+                options.Quality,
+                options.ThreadCount,
+                options.UseAlphaWeight,
+                options.UsePerceptual,
+                options.AlphaScaleRadius,
+                cancellationToken);
+        }
+
+        /// <summary>
+        /// Asynchronously compresses a managed raw pixel byte array on a background thread without creating a Unity <see cref="Texture2D"/>.
+        /// </summary>
+        public static unsafe Task<AstcRaw> CompressRawPixelsAsync(
+            byte[] rawPixels,
+            int width,
+            int height,
+            GraphicsFormat sourceFormat,
+            AstcCompressOptions options,
+            CancellationToken cancellationToken = default)
+        {
+            if (rawPixels == null || rawPixels.Length == 0)
+            {
+                Debug.LogError("Raw pixel array is null or empty.");
+                return Task.FromResult<AstcRaw>(null);
+            }
+
+            fixed (byte* ptr = rawPixels)
+            {
+                return AstcCpuBackend.CompressRawPixelsAsync(
+                    (IntPtr)ptr,
+                    rawPixels.Length,
+                    width,
+                    height,
+                    sourceFormat,
+                    options.TextureType,
+                    options.BlockSize,
+                    options.Quality,
+                    options.ThreadCount,
+                    options.UseAlphaWeight,
+                    options.UsePerceptual,
+                    options.AlphaScaleRadius,
+                    cancellationToken);
+            }
         }
 
         /// <summary>

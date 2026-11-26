@@ -60,6 +60,7 @@ namespace Aperture.Astcenc.Runtime
         private static int s_MipKernelNormal;
 
         private static readonly int s_PropTempBlocksRT = Shader.PropertyToID("_AstcTempBlocksRT");
+        private static readonly int s_PropTempSliceRT = Shader.PropertyToID("_AstcTempSliceRT");
 
         private static bool IsLoadStoreSupported(GraphicsFormat format)
         {
@@ -95,12 +96,23 @@ namespace Aperture.Astcenc.Runtime
 
         internal static bool IsInputSupported(Texture texture)
         {
-            if (texture == null
-                || texture.dimension != TextureDimension.Tex2D
-                || texture.width <= 0
-                || texture.height <= 0)
-            {
+            return IsInputSupportedCore(texture, allowSliced: false);
+        }
+
+        internal static bool IsSliceableInputSupported(Texture texture)
+        {
+            return IsInputSupportedCore(texture, allowSliced: true);
+        }
+
+        private static bool IsInputSupportedCore(Texture texture, bool allowSliced)
+        {
+            if (texture == null || texture.width <= 0 || texture.height <= 0)
                 return false;
+
+            if (texture.dimension != TextureDimension.Tex2D)
+            {
+                if (!allowSliced || (texture.dimension != TextureDimension.Tex2DArray && texture.dimension != TextureDimension.Cube))
+                    return false;
             }
 
             if (texture is RenderTexture rt && rt.antiAliasing > 1)
@@ -852,7 +864,9 @@ namespace Aperture.Astcenc.Runtime
             int destMip,
             int destX,
             int destY,
-            bool useAlphaWeight)
+            bool useAlphaWeight,
+            int sourceSlice = 0,
+            int destSlice = 0)
         {
             if (cmd == null)
                 throw new ArgumentNullException(nameof(cmd));
@@ -860,6 +874,10 @@ namespace Aperture.Astcenc.Runtime
                 throw new ArgumentNullException(nameof(source));
             if (destination == null)
                 throw new ArgumentNullException(nameof(destination));
+            if (sourceSlice < 0)
+                throw new ArgumentOutOfRangeException(nameof(sourceSlice), sourceSlice, "sourceSlice must be non-negative.");
+            if (destSlice < 0)
+                throw new ArgumentOutOfRangeException(nameof(destSlice), destSlice, "destSlice must be non-negative.");
 
             if (!IsSupported)
                 throw new NotSupportedException("GPU ASTC compression is not supported on this device.");
@@ -867,8 +885,8 @@ namespace Aperture.Astcenc.Runtime
             if ((SystemInfo.copyTextureSupport & CopyTextureSupport.RTToTexture) == 0)
                 throw new NotSupportedException("GPU direct CopyTexture from RenderTexture to Texture is not supported on this device.");
 
-            if (!IsInputSupported(source))
-                throw new ArgumentException("Source texture is not a supported 2D texture for GPU ASTC encoding.", nameof(source));
+            if (!IsSliceableInputSupported(source))
+                throw new ArgumentException("Source texture is not a supported 2D, Texture2DArray, or Cubemap texture for GPU ASTC encoding.", nameof(source));
 
             int slot = BlockSizeToSlot(blockSize);
             if (slot < 0 || !Encoder.GetBlockSize(blockSize, out uint bx, out uint by, out _))
@@ -916,16 +934,147 @@ namespace Aperture.Astcenc.Runtime
             var tempRT = new RenderTargetIdentifier(s_PropTempBlocksRT);
             cmd.GetTemporaryRT(s_PropTempBlocksRT, CreateBlockRTDescriptor(blockCountX, blockCountY), FilterMode.Point);
 
-            cmd.SetComputeTextureParam(s_Shader, kernel, s_PropSourceTex, source);
+            bool needsSliceExtract = source.dimension != TextureDimension.Tex2D;
+            if (needsSliceExtract)
+            {
+                var sliceDesc = new RenderTextureDescriptor(mipW, mipH, source.graphicsFormat, 0)
+                {
+                    enableRandomWrite = false,
+                    useMipMap = false,
+                    autoGenerateMips = false,
+                    msaaSamples = 1,
+                };
+                var tempSliceRT = new RenderTargetIdentifier(s_PropTempSliceRT);
+                cmd.GetTemporaryRT(s_PropTempSliceRT, sliceDesc, FilterMode.Point);
+                cmd.CopyTexture(source, sourceSlice, sourceMip, 0, 0, mipW, mipH, tempSliceRT, 0, 0, 0, 0);
+                cmd.SetComputeTextureParam(s_Shader, kernel, s_PropSourceTex, tempSliceRT);
+                SetCommonUniforms(cmd, s_Shader, mipW, mipH, 0, blockCountX, blockCountY, 0, mode, isSRGB, useAlphaWeight, qualityTier);
+            }
+            else
+            {
+                cmd.SetComputeTextureParam(s_Shader, kernel, s_PropSourceTex, source);
+                SetCommonUniforms(cmd, s_Shader, mipW, mipH, sourceMip, blockCountX, blockCountY, 0, mode, isSRGB, useAlphaWeight, qualityTier);
+            }
+
             cmd.SetComputeTextureParam(s_Shader, kernel, s_PropDestTex, tempRT);
-            SetCommonUniforms(cmd, s_Shader, mipW, mipH, sourceMip, blockCountX, blockCountY, 0, mode, isSRGB, useAlphaWeight, qualityTier);
 
             int groupsX = (blockCountX + 7) >> 3;
             int groupsY = (blockCountY + 7) >> 3;
             cmd.DispatchCompute(s_Shader, kernel, groupsX, groupsY, 1);
 
-            cmd.CopyTexture(tempRT, 0, 0, 0, 0, blockCountX, blockCountY, destination, 0, destMip, destX, destY);
+            cmd.CopyTexture(tempRT, 0, 0, 0, 0, blockCountX, blockCountY, destination, destSlice, destMip, destX, destY);
             cmd.ReleaseTemporaryRT(s_PropTempBlocksRT);
+            if (needsSliceExtract)
+            {
+                cmd.ReleaseTemporaryRT(s_PropTempSliceRT);
+            }
+        }
+
+        internal static Cubemap CompressCubemap(
+            Cubemap source,
+            TextureType textureType,
+            BlockSize blockSize,
+            CompressQuality quality,
+            bool includeMipmaps,
+            bool useAlphaWeight)
+        {
+            if (!IsSupported || !IsSliceableInputSupported(source) || source.dimension != TextureDimension.Cube)
+            {
+                Debug.LogError("GPU ASTC Cubemap compression requires a valid Cubemap and GPU compute support.");
+                return null;
+            }
+
+            GraphicsFormat astcFormat = ResolveTargetAstcFormat(source.graphicsFormat, textureType, blockSize, out _, out _);
+            int mipCount = includeMipmaps ? Math.Max(1, source.mipmapCount) : 1;
+            if (!CanUseDirectCopy(source.width, source.height, mipCount, blockSize, astcFormat))
+            {
+                Debug.LogError($"GPU direct ASTC Cubemap compression requires hardware ASTC support and block-aligned dimensions for '{astcFormat}'.");
+                return null;
+            }
+
+            TextureCreationFlags flags = TextureCreationFlags.DontInitializePixels | TextureCreationFlags.DontUploadUponCreate;
+            if (mipCount > 1)
+                flags |= TextureCreationFlags.MipChain;
+
+            var dst = new Cubemap(source.width, astcFormat, mipCount, flags);
+            var cmd = new CommandBuffer { name = "AstcGpuCompressCubemap" };
+            try
+            {
+                dst.name = source.name;
+                for (int face = 0; face < 6; face++)
+                {
+                    for (int mip = 0; mip < mipCount; mip++)
+                    {
+                        Encode(cmd, source, dst, textureType, blockSize, quality, mip, mip, 0, 0, useAlphaWeight, face, face);
+                    }
+                }
+                Graphics.ExecuteCommandBuffer(cmd);
+                return dst;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"GPU ASTC Cubemap compression failed: {ex.Message}");
+                UnityEngine.Object.DestroyImmediate(dst);
+                return null;
+            }
+            finally
+            {
+                cmd.Release();
+            }
+        }
+
+        internal static Texture2DArray CompressTexture2DArray(
+            Texture2DArray source,
+            TextureType textureType,
+            BlockSize blockSize,
+            CompressQuality quality,
+            bool includeMipmaps,
+            bool useAlphaWeight)
+        {
+            if (!IsSupported || !IsSliceableInputSupported(source) || source.dimension != TextureDimension.Tex2DArray)
+            {
+                Debug.LogError("GPU ASTC Texture2DArray compression requires a valid Texture2DArray and GPU compute support.");
+                return null;
+            }
+
+            GraphicsFormat astcFormat = ResolveTargetAstcFormat(source.graphicsFormat, textureType, blockSize, out _, out _);
+            int mipCount = includeMipmaps ? Math.Max(1, source.mipmapCount) : 1;
+            if (!CanUseDirectCopy(source.width, source.height, mipCount, blockSize, astcFormat))
+            {
+                Debug.LogError($"GPU direct ASTC Texture2DArray compression requires hardware ASTC support and block-aligned dimensions for '{astcFormat}'.");
+                return null;
+            }
+
+            TextureCreationFlags flags = TextureCreationFlags.DontInitializePixels | TextureCreationFlags.DontUploadUponCreate;
+            if (mipCount > 1)
+                flags |= TextureCreationFlags.MipChain;
+
+            int depth = source.depth;
+            var dst = new Texture2DArray(source.width, source.height, depth, astcFormat, flags, mipCount);
+            var cmd = new CommandBuffer { name = "AstcGpuCompressTexture2DArray" };
+            try
+            {
+                dst.name = source.name;
+                for (int slice = 0; slice < depth; slice++)
+                {
+                    for (int mip = 0; mip < mipCount; mip++)
+                    {
+                        Encode(cmd, source, dst, textureType, blockSize, quality, mip, mip, 0, 0, useAlphaWeight, slice, slice);
+                    }
+                }
+                Graphics.ExecuteCommandBuffer(cmd);
+                return dst;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"GPU ASTC Texture2DArray compression failed: {ex.Message}");
+                UnityEngine.Object.DestroyImmediate(dst);
+                return null;
+            }
+            finally
+            {
+                cmd.Release();
+            }
         }
 
         internal static Texture2D CompressToTexture(

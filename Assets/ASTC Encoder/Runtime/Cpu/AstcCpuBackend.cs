@@ -1211,5 +1211,141 @@ namespace Aperture.Astcenc.Runtime
                 return DecompressToTexture((IntPtr)ptr, payloadLen, width, height, blockSize, srgb, isHdr, threadCount, makeNoLongerReadable);
             }
         }
+
+        internal static unsafe AstcRaw CompressRawPixels(
+            IntPtr pixelPtr,
+            int pixelByteLength,
+            int width,
+            int height,
+            GraphicsFormat sourceFormat,
+            TextureType textureType,
+            BlockSize blockSize,
+            CompressQuality quality,
+            int threadCount,
+            bool useAlphaWeight,
+            bool usePerceptual,
+            uint alphaScaleRadius)
+        {
+            if (!IsSupported)
+            {
+                Debug.LogError("Native CPU ASTC compression library is not available on this platform.");
+                return null;
+            }
+
+            if (pixelPtr == IntPtr.Zero || width <= 0 || height <= 0)
+            {
+                Debug.LogError("Invalid raw pixel buffer or dimensions.");
+                return null;
+            }
+
+            int bpp = GetSourcePixelByteSize(sourceFormat);
+            if (bpp <= 0 || !IsSupportGraphicFormat(sourceFormat))
+            {
+                Debug.LogError($"Unsupported GraphicsFormat for raw pixel ASTC compression: {sourceFormat}");
+                return null;
+            }
+
+            long requiredBytes = (long)width * height * bpp;
+            if (pixelByteLength < requiredBytes)
+            {
+                Debug.LogError($"Raw pixel buffer ({pixelByteLength} bytes) is smaller than required ({requiredBytes} bytes) for {width}x{height} {sourceFormat}.");
+                return null;
+            }
+
+            using AstcContext ctx = AstcContext.Create(sourceFormat, textureType, blockSize, quality, threadCount, useAlphaWeight, usePerceptual, alphaScaleRadius);
+            if (ctx == null)
+                return null;
+
+            var snapshot = new CompactTextureSnapshot
+            {
+                Buffer = pixelPtr,
+                Format = sourceFormat,
+                Width = width,
+                Height = height,
+                MipCount = 1,
+            };
+
+            astcenc_swizzle swizzle = GetSwizzle(sourceFormat, textureType);
+            return CompressCompactSnapshot(ctx, swizzle, snapshot, CancellationToken.None);
+        }
+
+        internal static unsafe Task<AstcRaw> CompressRawPixelsAsync(
+            IntPtr pixelPtr,
+            int pixelByteLength,
+            int width,
+            int height,
+            GraphicsFormat sourceFormat,
+            TextureType textureType,
+            BlockSize blockSize,
+            CompressQuality quality,
+            int threadCount,
+            bool useAlphaWeight,
+            bool usePerceptual,
+            uint alphaScaleRadius,
+            CancellationToken cancellationToken)
+        {
+            if (cancellationToken.IsCancellationRequested)
+                return Task.FromCanceled<AstcRaw>(cancellationToken);
+
+            if (!IsSupported)
+            {
+                Debug.LogError("Native CPU ASTC compression library is not available on this platform.");
+                return Task.FromResult<AstcRaw>(null);
+            }
+
+            if (pixelPtr == IntPtr.Zero || width <= 0 || height <= 0)
+            {
+                Debug.LogError("Invalid raw pixel buffer or dimensions.");
+                return Task.FromResult<AstcRaw>(null);
+            }
+
+            int bpp = GetSourcePixelByteSize(sourceFormat);
+            if (bpp <= 0 || !IsSupportGraphicFormat(sourceFormat))
+            {
+                Debug.LogError($"Unsupported GraphicsFormat for raw pixel ASTC compression: {sourceFormat}");
+                return Task.FromResult<AstcRaw>(null);
+            }
+
+            long requiredBytes = (long)width * height * bpp;
+            if (pixelByteLength < requiredBytes)
+            {
+                Debug.LogError($"Raw pixel buffer ({pixelByteLength} bytes) is smaller than required ({requiredBytes} bytes) for {width}x{height} {sourceFormat}.");
+                return Task.FromResult<AstcRaw>(null);
+            }
+
+            // Copy caller-owned pixels once so the background task is safe even if the caller frees/reuses its buffer.
+            IntPtr copy = Marshal.AllocHGlobal((int)requiredBytes);
+            try
+            {
+                UnsafeUtility.MemCpy((void*)copy, (void*)pixelPtr, requiredBytes);
+            }
+            catch
+            {
+                Marshal.FreeHGlobal(copy);
+                throw;
+            }
+
+            var snapshot = new CompactTextureSnapshot
+            {
+                Buffer = copy,
+                Format = sourceFormat,
+                Width = width,
+                Height = height,
+                MipCount = 1,
+            };
+
+            return Task.Run(() =>
+            {
+                using (snapshot)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    using AstcContext ctx = AstcContext.Create(sourceFormat, textureType, blockSize, quality, threadCount, useAlphaWeight, usePerceptual, alphaScaleRadius);
+                    if (ctx == null)
+                        return null;
+                    astcenc_swizzle swizzle = GetSwizzle(sourceFormat, textureType);
+                    return CompressCompactSnapshot(ctx, swizzle, snapshot, cancellationToken);
+                }
+            }, cancellationToken);
+        }
     }
 }
