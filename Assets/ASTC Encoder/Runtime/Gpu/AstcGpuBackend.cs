@@ -84,6 +84,9 @@ namespace Aperture.Astcenc.Runtime
                 return false;
             }
 
+            if (texture is RenderTexture rt && rt.antiAliasing > 1)
+                return false;
+
             GraphicsFormat format = texture.graphicsFormat;
             if (format == GraphicsFormat.None)
                 return false;
