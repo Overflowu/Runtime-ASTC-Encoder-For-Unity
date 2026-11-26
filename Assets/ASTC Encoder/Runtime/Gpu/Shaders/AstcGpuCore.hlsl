@@ -45,7 +45,10 @@ float4 AstcFetchWorkingPixel(uint baseX, uint baseY, uint x, uint y, uint effMod
 
     if (effMode == ASTC_EFF_LDR_NORMAL)
     {
-        return float4(saturate(raw.g) * 255.0, 0.0, 0.0, saturate(raw.r) * 255.0);
+        // _AstcIsSRGB means the source view decodes sRGB on load; re-encode to recover the stored bytes
+        // because normal data is always emitted to a linear (UNorm) ASTC target.
+        float2 rg = (_AstcIsSRGB != 0u) ? AstcLinearToSRGB(float3(raw.rg, 0.0)).rg : saturate(raw.rg);
+        return float4(rg.y * 255.0, 0.0, 0.0, rg.x * 255.0);
     }
 
     if (effMode == ASTC_EFF_LDR_RGB)
@@ -1084,8 +1087,9 @@ uint4 AstcEncodeBlock(uint blockXIdx, uint blockYIdx)
             uint4 c8;
             if (effMode == ASTC_EFF_LDR_NORMAL)
             {
-                uint g8 = (uint)clamp(floor(saturate(c.g) * 255.0 + 0.5), 0.0, 255.0);
-                uint r8 = (uint)clamp(floor(saturate(c.r) * 255.0 + 0.5), 0.0, 255.0);
+                float2 rg = (_AstcIsSRGB != 0u) ? AstcLinearToSRGB(float3(c.rg, 0.0)).rg : saturate(c.rg);
+                uint g8 = (uint)clamp(floor(rg.y * 255.0 + 0.5), 0.0, 255.0);
+                uint r8 = (uint)clamp(floor(rg.x * 255.0 + 0.5), 0.0, 255.0);
                 c8 = uint4(g8, g8, g8, r8);
             }
             else

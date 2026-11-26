@@ -43,7 +43,7 @@ namespace Aperture.Astcenc.Runtime
             return false;
         }
 
-        internal static GraphicsFormat FitAstcGraphicsFormat(GraphicsFormat graphicsFormat, BlockSize blockSize)
+        internal static GraphicsFormat FitAstcGraphicsFormat(GraphicsFormat graphicsFormat, BlockSize blockSize, TextureType textureType = TextureType.Default)
         {
             switch (graphicsFormat)
             {
@@ -54,6 +54,10 @@ namespace Aperture.Astcenc.Runtime
 
                 case GraphicsFormat.B8G8R8_SRGB:
                 case GraphicsFormat.B8G8R8A8_SRGB:
+                    if (textureType == TextureType.Normal)
+                    {
+                        goto case GraphicsFormat.R8G8B8A8_UNorm;
+                    }
                     {
                         switch (blockSize)
                         {

@@ -77,9 +77,9 @@ namespace Aperture.Astcenc.Runtime
             };
         }
 
-        internal static astcenc_profile GetColorProfile(GraphicsFormat graphicsFormat)
+        internal static astcenc_profile GetColorProfile(GraphicsFormat graphicsFormat, TextureType textureType = TextureType.Default)
         {
-            return graphicsFormat switch
+            astcenc_profile profile = graphicsFormat switch
             {
                 // LDR
                 GraphicsFormat.R8_UNorm => astcenc_profile.ASTCENC_PRF_LDR,
@@ -112,6 +112,13 @@ namespace Aperture.Astcenc.Runtime
                 GraphicsFormat.R32G32B32A32_SFloat => astcenc_profile.ASTCENC_PRF_HDR,
                 _ => throw new NotSupportedException($"GraphicsFormat is not supported: {graphicsFormat}"),
             };
+
+            if (textureType == TextureType.Normal && profile == astcenc_profile.ASTCENC_PRF_LDR_SRGB)
+            {
+                return astcenc_profile.ASTCENC_PRF_LDR;
+            }
+
+            return profile;
         }
 
         private static bool HasAlphaChannel(GraphicsFormat graphicsFormat)
@@ -717,7 +724,7 @@ namespace Aperture.Astcenc.Runtime
                 return null;
             }
 
-            GraphicsFormat astcFormat = Encoder.FitAstcGraphicsFormat(inputTexture.graphicsFormat, blockSize);
+            GraphicsFormat astcFormat = Encoder.FitAstcGraphicsFormat(inputTexture.graphicsFormat, blockSize, textureType);
             int mipCount = includeMipmaps ? inputTexture.mipmapCount : 1;
             TextureCreationFlags flags = mipCount > 1 ? TextureCreationFlags.MipChain : TextureCreationFlags.None;
             var result = new Texture2D(inputTexture.width, inputTexture.height, astcFormat, mipCount, flags);
@@ -744,7 +751,7 @@ namespace Aperture.Astcenc.Runtime
 
             raw.ThrowIfDisposed();
 
-            GraphicsFormat graphicsFormat = Encoder.FitAstcGraphicsFormat(inputTexture.graphicsFormat, blockSize);
+            GraphicsFormat graphicsFormat = Encoder.FitAstcGraphicsFormat(inputTexture.graphicsFormat, blockSize, textureType);
             if (inputTexture.Reinitialize(inputTexture.width, inputTexture.height, graphicsFormat, inputTexture.mipmapCount > 1))
             {
                 inputTexture.LoadRawTextureData(raw);

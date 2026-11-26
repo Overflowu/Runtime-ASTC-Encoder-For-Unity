@@ -83,7 +83,7 @@ namespace Aperture.Astcenc.Runtime
                 : threadCount;
 
             float qualityValue = AstcCpuBackend.GetQualityValue(quality);
-            astcenc_profile profile = AstcCpuBackend.GetColorProfile(graphicsFormat);
+            astcenc_profile profile = AstcCpuBackend.GetColorProfile(graphicsFormat, textureType);
             CodecFlags flags = AstcCpuBackend.GetFlags(textureType, graphicsFormat, useAlphaWeight);
 
             astcenc_config config = new astcenc_config();
@@ -138,7 +138,7 @@ namespace Aperture.Astcenc.Runtime
         internal bool IsCompatibleWith(GraphicsFormat graphicsFormat, TextureType textureType)
         {
             bool isNormalContext = (Flags & CodecFlags.MapNormal) != 0;
-            return AstcCpuBackend.GetColorProfile(graphicsFormat) == Profile
+            return AstcCpuBackend.GetColorProfile(graphicsFormat, textureType) == Profile
                 && isNormalContext == (textureType == TextureType.Normal);
         }
 

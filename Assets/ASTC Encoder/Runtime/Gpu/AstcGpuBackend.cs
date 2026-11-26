@@ -117,10 +117,12 @@ namespace Aperture.Astcenc.Runtime
             return true;
         }
 
-        internal static GraphicsFormat ResolveTargetAstcFormat(GraphicsFormat sourceFormat, BlockSize blockSize, out bool isSRGB, out bool isHdr)
+        internal static GraphicsFormat ResolveTargetAstcFormat(GraphicsFormat sourceFormat, TextureType textureType, BlockSize blockSize, out bool isSRGB, out bool isHdr)
         {
-            isSRGB = GraphicsFormatUtility.IsSRGBFormat(sourceFormat);
-            isHdr = !isSRGB && GraphicsFormatUtility.IsFloatFormat(sourceFormat);
+            bool sourceIsSRGB = GraphicsFormatUtility.IsSRGBFormat(sourceFormat);
+            isHdr = !sourceIsSRGB && GraphicsFormatUtility.IsFloatFormat(sourceFormat);
+            // Normal maps store linear tangent-space vectors; never emit an sRGB ASTC target for them.
+            isSRGB = sourceIsSRGB && textureType != TextureType.Normal;
             return GetAstcGraphicsFormat(blockSize, isSRGB, isHdr);
         }
 
@@ -201,7 +203,6 @@ namespace Aperture.Astcenc.Runtime
 
             if (textureType == TextureType.Normal && !isHdr)
             {
-                isSRGB = false;
                 return k_ModeLdrNormal;
             }
 
@@ -640,7 +641,7 @@ namespace Aperture.Astcenc.Runtime
                 return null;
             }
 
-            GraphicsFormat astcFormat = ResolveTargetAstcFormat(source.graphicsFormat, blockSize, out _, out _);
+            GraphicsFormat astcFormat = ResolveTargetAstcFormat(source.graphicsFormat, textureType, blockSize, out _, out _);
             int mipCount = includeMipmaps ? Math.Max(1, source.mipmapCount) : 1;
 
             // Fast zero-readback path when all mip dimensions align cleanly and GPU natively samples ASTC
@@ -704,7 +705,7 @@ namespace Aperture.Astcenc.Runtime
                 return false;
             }
 
-            GraphicsFormat astcFormat = ResolveTargetAstcFormat(inputTexture.graphicsFormat, blockSize, out _, out _);
+            GraphicsFormat astcFormat = ResolveTargetAstcFormat(inputTexture.graphicsFormat, textureType, blockSize, out _, out _);
             int width = inputTexture.width;
             int height = inputTexture.height;
             int mipCount = Math.Max(1, inputTexture.mipmapCount);
