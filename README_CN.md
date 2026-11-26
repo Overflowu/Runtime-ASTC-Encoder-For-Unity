@@ -14,17 +14,21 @@
   - **自动后端（`EncodeBackend.Auto`，全接口默认）**：设备与输入满足条件时自动优先走 GPU，不支持或运行失败时自动平滑回退到 CPU。
 - **多种使用形态**：
   - 原地压缩并上传 GPU（`Texture2D.Compress`）
-  - 一站式同步 / 异步生成新压缩纹理（`Texture.CompressToTexture` / `CompressToTextureAsync`，支持 `RenderTexture`、零回读拷贝与 `AsyncGPUReadback`）
+  - 一站式同步 / 异步生成新压缩纹理（`Texture.CompressToTexture` / `CompressToTextureAsync`，支持 `RenderTexture`、零回读拷贝、`AsyncGPUReadback` 与 **`AstcCompressOptions.GenerateMipmaps` GPU 一体化 Mipmap 生成**）
+  - 扩展纹理维度与原始像素直压：`Encoder.CompressCubemap`、`Encoder.CompressTexture2DArray`、`Encoder.Encode` 的 `sourceSlice`/`destSlice` 参数，以及无需创建 `Texture2D` 的 `Encoder.CompressRawPixels` / `CompressRawPixelsAsync`（支持 `NativeArray<byte>` 与 `byte[]`）
+  - **帧预算调度队列与上下文池（`AstcCompressionQueue`）**：支持 `High` / `Normal` / `Low` 优先级、`MaxGpuTexelsPerFrame` 每帧 GPU 像素预算、`MaxConcurrentCpuTasks` 并发上限以及基于 `parentContext` 表共享的 `AstcContext` 池化复用
+  - **标准 KTX v1 容器与持久化磁盘缓存**：`AstcKtxContainer` / `Encoder.EncodeToKTX` / `EncodeToKTXAsync` / `LoadFromKTX`（保留完整 Mipmap 链与 UNorm/sRGB/HDR 元数据，非 ASTC 设备自动 CPU 解压回退），配合原子写入的 `AstcDiskCache`（`TryLoad` / `TryLoadAsync` / `CompressAndSaveAsync` / `LoadOrCompressAsync`）
+  - **Unity Editor 可视化对比与质检窗口（`Window/ASTC Encoder/Benchmark & Inspector`）**：同屏对比 CPU 与 GPU 解码结果、放大误差热力图、PSNR / RMSE / 法线角度误差、耗时、显存节省率，并支持一键导出 `.ktx` / `.astc`
   - 底层 `CommandBuffer` 录制（`Encoder.Encode`，支持批处理、Async Compute 与动态图集/Virtual Texture 子区域更新）
   - 同步 / 异步获取非托管原始 ASTC 数据缓冲（`CompressTexture` / `CompressTextureAsync` → `AstcRaw`）
   - 统一 `AstcCompressOptions` 结构体配置（含 `Default` / `NormalMap` / `Transparent` 预设）与可复用 `AstcContext`（支持 `astcenc 5.x` `parentContext` 共享）
   - 同步 / 异步导出标准 `.astc` 字节数组（`EncodeToASTC` / `EncodeToASTCAsync`，仅编码 Mip 0）与 CPU 软件解压（`Decompress` / `DecompressToTexture` / `DecompressAstcFile`）
 - **高性能低 GC 设计**：
-  - **GPU 后端**：独立轻量化 `ASTC_FAST_ONLY` Kernel（极低 VGPR 寄存器占用）、纯整数 ALU BISE 编码（零大常量表）、Void-Extent 纯色块零损快速路径、Normal 专用 `CEM 4` + 切线空间角度误差 Dual-Plane、同时支持 RGB（ORM/MRAO）与 RGBA 的动态 CCS Dual-Plane、各向异性权重网格（`6x4`/`4x6`/`8x4`/`4x8`）、HDR CEM 11 高精度差值模式、量化后理想端点二次重拟合、High 档 2-Partition 搜索、零 LOH `AsyncGPUReadback` 同步回读与 `PreloadGpu`（同时预热 Fast/Full 的 Tex 与 Buf Kernel）/ `ReleaseGpuCache`。
-  - **CPU 后端**：对 `RGBA8` / `RGBA16F` / `RGBA32F` 四通道格式走**零拷贝直传**（`NativeSlice` 指针直接传递），异步模式下**主线程仅做紧凑 `MemCpy` 快照、后台线程逐级展开 Mipmap**（峰值内存最高降低 8×），其余格式采用直接 `unsafe` 指针零堆分配展开，支持多核并行与 `CancellationToken` 取消。
-- **丰富的输入格式与完整 Mipmap 支持**：
+  - **GPU 后端**：独立轻量化 `ASTC_FAST_ONLY` Kernel（极低 VGPR 寄存器占用）、**`<= 6x6` LDR 块片上 RGBA8 像素缓存**（消除多轮候选评估的重复纹理加载与 sRGB `pow`）、纯整数 ALU BISE 编码（零大常量表）、集成线性/sRGB 与法线归一化 GPU Mipmap 生成器（`AstcGpuMipGenerator.compute`）、Void-Extent 纯色块零损快速路径、Normal 专用 `CEM 4` + 切线空间角度误差 Dual-Plane、同时支持 RGB（ORM/MRAO）与 RGBA 的动态 CCS Dual-Plane、各向异性权重网格（`6x4`/`4x6`/`8x4`/`4x8`）、HDR CEM 11 高精度差值模式、量化后理想端点二次重拟合、High 档 2-Partition 搜索、零 LOH `AsyncGPUReadback` 同步回读与 `PreloadGpu` / `ReleaseGpuCache`。
+  - **CPU 后端**：对 `RGBA8` / `RGBA16F` / `RGBA32F` 四通道格式走**零拷贝直传**（`NativeSlice` 指针直接传递），异步模式下**主线程仅做紧凑 `MemCpy` 快照、后台线程逐级展开 Mipmap**（峰值内存最高降低 8×），支持可选 **Unity Job System（`IJobParallelFor`）** 调度（`UseUnityJobSystem`），其余格式采用直接 `unsafe` 指针零堆分配展开，支持多核并行与 `CancellationToken` 取消。
+- **丰富的输入格式、完整 Mipmap 与测试保障**：
   - 支持 24 种未压缩 `GraphicsFormat`（GPU 后端亦支持 `B10G11R11_UFloatPack32` 等 2D `RenderTexture`），涵盖 **LDR（8-bit UNorm / sRGB、16-bit UNorm）** 与 **HDR（16-bit / 32-bit Float）**。
-  - 支持完整 Mipmap 链逐级压缩（兼容非正方形与非 2 的幂次纹理）。
+  - 支持完整 Mipmap 链逐级压缩（兼容非正方形与非 2 的幂次纹理），内置 EditMode 交叉解码黄金单元测试（`Aperture.Astcenc.Tests`）与 CI Shader / `.meta` GUID 校验工作流。
 - **贴图类型与通道自动适配**：
   - 普通贴图（`TextureType.Default`）：自动处理 `BGRA` 通道重排与 sRGB 色彩空间；支持按需开启 `useAlphaWeight` 透明通道加权（默认关闭以避免破坏 ORM / Mask 等通道打包贴图，开启时仅加权 RGB 误差并保持 Alpha 满权重）。
   - 法线贴图（`TextureType.Normal`）：按 `GGGR` 通道重排（CPU 自动启用 `MapNormal`，GPU 专用 `CEM_LDR_LUM_ALPHA_DIRECT` + 角度误差 Dual-Plane 编码，且无论源图为 sRGB 还是浮点格式均统一输出线性 UNorm ASTC）。

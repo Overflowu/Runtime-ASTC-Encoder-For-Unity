@@ -1,10 +1,10 @@
 {
   "name": "com.aperture.astcenc",
   "displayName": "Runtime ASTC Encoder",
-  "version": "2.0.0",
+  "version": "2.3.0",
   "unity": "2021.3",
-  "keywords": ["Texture", "ASTC", "Runtime", "astcenc"],
-  "description": "Compress texture to astc format at runtime.",
+  "keywords": ["Texture", "ASTC", "Runtime", "astcenc", "GPU", "ComputeShader", "KTX"],
+  "description": "High-performance runtime ASTC texture compression (GPU Compute + native ARM astc-encoder CPU), GPU mipmap generation, KTX v1 disk caching, and Editor benchmarking for Unity.",
   "license": "MIT",
   "dependencies": {
   }
