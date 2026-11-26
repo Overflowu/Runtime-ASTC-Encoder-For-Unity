@@ -44,16 +44,48 @@ namespace Aperture.Astcenc.Runtime
         /// </summary>
         internal static unsafe void LoadFromCopy<T>(this ref astcenc_image image, NativeSlice<T> rawData, int width, int height, int bitness) where T : unmanaged
         {
+            if (image.data != IntPtr.Zero)
+            {
+                image.Release();
+            }
+
+            int elemSize = sizeof(T);
+            long byteCount = (long)rawData.Length * elemSize;
+            IntPtr slicePtr = Marshal.AllocHGlobal((IntPtr)byteCount);
+            IntPtr dataPtr = IntPtr.Zero;
+            try
+            {
+                if (rawData.Stride == elemSize)
+                {
+                    UnsafeUtility.MemCpy((void*)slicePtr, rawData.GetUnsafeReadOnlyPtr(), byteCount);
+                }
+                else
+                {
+                    T* dst = (T*)slicePtr;
+                    for (int i = 0; i < rawData.Length; i++)
+                    {
+                        dst[i] = rawData[i];
+                    }
+                }
+
+                dataPtr = Marshal.AllocHGlobal(IntPtr.Size);
+                Marshal.WriteIntPtr(dataPtr, 0, slicePtr);
+            }
+            catch
+            {
+                if (dataPtr != IntPtr.Zero)
+                {
+                    Marshal.FreeHGlobal(dataPtr);
+                }
+                Marshal.FreeHGlobal(slicePtr);
+                throw;
+            }
+
             image.dim_x = (uint)width;
             image.dim_y = (uint)height;
             image.dim_z = 1;
             image.data_type = GetDataType(bitness);
-            image.data = Marshal.AllocHGlobal(IntPtr.Size);
-
-            long byteCount = (long)rawData.Length * sizeof(T);
-            IntPtr slicePtr = Marshal.AllocHGlobal((IntPtr)byteCount);
-            UnsafeUtility.MemCpy((void*)slicePtr, rawData.GetUnsafeReadOnlyPtr(), byteCount);
-            Marshal.WriteIntPtr(image.data, 0, slicePtr);
+            image.data = dataPtr;
         }
 
         internal static void LoadFrom<T>(this ref astcenc_image image, NativeSlice<T> rawData, int width, int height, int bitness) where T : unmanaged, IRawData
@@ -62,14 +94,29 @@ namespace Aperture.Astcenc.Runtime
             {
                 image.Release();
             }
+
+            IntPtr slicePtr = LoadData(rawData, bitness);
+            IntPtr dataPtr = IntPtr.Zero;
+            try
+            {
+                dataPtr = Marshal.AllocHGlobal(IntPtr.Size);
+                Marshal.WriteIntPtr(dataPtr, 0, slicePtr);
+            }
+            catch
+            {
+                if (dataPtr != IntPtr.Zero)
+                {
+                    Marshal.FreeHGlobal(dataPtr);
+                }
+                Marshal.FreeHGlobal(slicePtr);
+                throw;
+            }
+
             image.dim_x = (uint)width;
             image.dim_y = (uint)height;
             image.dim_z = 1;
             image.data_type = GetDataType(bitness);
-            image.data = Marshal.AllocHGlobal(IntPtr.Size);
-
-            IntPtr slicePtr = LoadData(rawData, bitness);
-            Marshal.WriteIntPtr(image.data, 0, slicePtr);
+            image.data = dataPtr;
         }
 
         internal static void Release(this ref astcenc_image image, bool ownsSliceMemory = true)
