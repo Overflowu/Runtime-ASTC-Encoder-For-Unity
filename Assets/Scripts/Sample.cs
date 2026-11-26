@@ -5,27 +5,27 @@ using UnityEngine;
 public class Sample : MonoBehaviour
 {
     /// <summary>
-    /// input texture should be read/write enabled and uncompressed
+    /// Input texture (CPU backend requires Read/Write enabled; GPU backend also supports non-readable textures).
     /// </summary>
     public Texture2D inputTexture;
     public Texture2D outputTexture;
+    public BlockSize blockSize = BlockSize.ASTC_6x6;
+    public CompressQuality quality = CompressQuality.Fast;
+    public EncodeBackend backend = EncodeBackend.Auto;
 
     void Start()
     {
-        using (AstcRaw raw = inputTexture.CompressTexture(TextureType.Default, BlockSize.ASTC_6x6, CompressQuality.Fast))
-        {
-            if(raw != null)
-            {
-                raw.ThrowIfDisposed();
+        if (inputTexture == null)
+            return;
 
-                outputTexture = new Texture2D(inputTexture.width, inputTexture.height, TextureFormat.ASTC_6x6, inputTexture.mipmapCount > 1, false);
-                outputTexture.name = inputTexture.name;
-                outputTexture.LoadRawTextureData(raw);
-                outputTexture.Apply(false, true);
-            }
-        }
+        outputTexture = inputTexture.CompressToTexture(
+            TextureType.Default,
+            blockSize,
+            quality,
+            includeMipmaps: inputTexture.mipmapCount > 1,
+            backend: backend);
 
-        byte[] fileData = inputTexture.EncodeToASTC();
+        byte[] fileData = inputTexture.EncodeToASTC(TextureType.Default, blockSize, quality, backend: backend);
         if (fileData != null)
         {
             string filePath = Path.Combine(Application.dataPath, "outputTexture.astc");

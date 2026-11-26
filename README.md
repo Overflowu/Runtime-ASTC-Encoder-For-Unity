@@ -1,27 +1,31 @@
 # Runtime ASTC Encoder for Unity
 
-一个面向 Unity 的**运行时 ASTC 纹理压缩库**（Unity Package: `com.aperture.astcenc`），基于 ARM 官方开源的 [astc-encoder](https://github.com/ARM-software/astc-encoder) **`v5.7.1`** 交叉编译原生库，通过 C# **P/Invoke** 调用原生编码器，支持在移动端（iOS / Android）及桌面端（Windows / macOS Editor & Standalone）运行时将未压缩的 `Texture2D` 实时压缩为 ASTC 格式或导出为标准 `.astc` 文件。
+一个面向 Unity 的**运行时 ASTC 纹理压缩库**（Unity Package: `com.aperture.astcenc`），同时提供 **CPU 原生后端**（基于 ARM 官方 [astc-encoder](https://github.com/ARM-software/astc-encoder) **`v5.7.1`** P/Invoke）与 **GPU Compute Shader 实时后端**，支持通过统一的 `Encoder` API 自由切换 `EncodeBackend`（`Cpu` / `Gpu` / `Auto`），在移动端（iOS / Android）及桌面端（Windows / macOS Editor & Standalone）运行时将 `Texture2D` 或 `RenderTexture` 实时压缩为 ASTC 格式或导出为标准 `.astc` 文件。
 
 ---
 
 ## 核心特性
 
-- **运行时动态压缩**：无需依赖离线导入管线，可在运行时对动态生成或网络下载的 `Texture2D` 执行 ASTC 压缩，显著降低移动端显存占用。
+- **双后端统一切换（CPU / GPU / Auto）**：
+  - **CPU 后端（`EncodeBackend.Cpu`）**：基于 ARM `astc-encoder v5.7.1`，提供最高离线级压缩质量（`Fastest` ~ `Exhaustive`），无需 GPU Compute Shader 支持。
+  - **GPU 后端（`EncodeBackend.Gpu`）**：自研跨平台无大表 HLSL Compute Shader 编码器（Metal / Vulkan / OpenGL ES 3.1+ / D3D11 / D3D12），**支持全部 6 种 BlockSize（`4x4` ~ `12x12`）及 LDR / sRGB / Normal / HDR（`CEM 11/14/15`）**，支持 **`RenderTexture` 与非可读 `Texture2D`**，对齐尺寸下可走 `CommandBuffer.CopyTexture` **纯 GPU 零 CPU 回读**路径，亦支持 `AsyncGPUReadback` 异步导出原始字节。
+  - **自动后端（`EncodeBackend.Auto`）**：设备与输入满足条件时自动优先走 GPU，否则平滑回退到 CPU。
 - **多种使用形态**：
   - 原地压缩并上传 GPU（`Texture2D.Compress`）
-  - 同步 / 异步获取非托管原始 ASTC 数据缓冲（`Texture2D.CompressTexture` / `Texture2D.CompressTextureAsync` → `AstcRaw`）
-  - 复用编码上下文批量压缩（`AstcContext`）
-  - 导出符合标准容器规范的 `.astc` 字节数组（`Texture2D.EncodeToASTC`，仅编码 Mip 0）
+  - 一站式生成新压缩纹理（`Texture.CompressToTexture`，支持 `RenderTexture` 与零回读拷贝）
+  - 底层 `CommandBuffer` 录制（`Encoder.Encode`，支持批处理、Async Compute 与动态图集/Virtual Texture 子区域更新）
+  - 同步 / 异步获取非托管原始 ASTC 数据缓冲（`CompressTexture` / `CompressTextureAsync` → `AstcRaw`）
+  - 复用 CPU 编码上下文批量压缩（`AstcContext`）
+  - 同步 / 异步导出符合标准容器规范的 `.astc` 字节数组（`EncodeToASTC` / `EncodeToASTCAsync`，仅编码 Mip 0）
 - **高性能低 GC 设计**：
-  - 对 `RGBA8` / `RGBA16F` / `RGBA32F` 四通道格式走**零拷贝直传**（`NativeSlice` 指针直接传递，异步模式下采用原生 `MemCpy` 快照）。
-  - 其余像素格式采用无堆分配的 `Marshal.WriteInt16` / `Marshal.WriteInt32` 与指针遍历，消除逐像素 GC 垃圾。
-  - 支持**多核并行压缩**（`threadCount`）、**后台异步压缩**（不阻塞主线程）以及 **`AstcContext` 上下文复用**（默认开启 `SelfDecompressOnly` 缩短初始化耗时）。
+  - **GPU 后端**：纯整数 ALU BISE 编码与量化（零大常量查找表，规避 Android HLSLcc / 移动 GPU 寄存器溢出）、Void-Extent 纯色块零损快速路径、Normal 贴图专用 `CEM 4` + Dual-Plane、RGBA Dual-Plane 与 High 档位 2-Partition 搜索、内置临时 RT 缓存池与 `PreloadGpu` / `ReleaseGpuCache` 接口。
+  - **CPU 后端**：对 `RGBA8` / `RGBA16F` / `RGBA32F` 四通道格式走**零拷贝直传**（`NativeSlice` 指针直接传递，异步模式下采用原生 `MemCpy` 快照），其余格式无堆分配转换，支持多核并行与 `CancellationToken` 取消。
 - **丰富的输入格式与完整 Mipmap 支持**：
-  - 支持 24 种未压缩 `GraphicsFormat`，涵盖 **LDR（8-bit UNorm / sRGB、16-bit UNorm）** 与 **HDR（16-bit / 32-bit Float）**。
-  - 支持完整 Mipmap 链逐级压缩（兼容非正方形纹理）。
+  - 支持 24 种未压缩 `GraphicsFormat`（GPU 后端亦支持 `B10G11R11_UFloatPack32` 等 2D `RenderTexture`），涵盖 **LDR（8-bit UNorm / sRGB、16-bit UNorm）** 与 **HDR（16-bit / 32-bit Float）**。
+  - 支持完整 Mipmap 链逐级压缩（兼容非正方形与非 2 的幂次纹理）。
 - **贴图类型与通道自动适配**：
-  - 普通贴图（`TextureType.Default`）：自动处理 `BGRA` 通道重排；支持按需开启 `useAlphaWeight` 透明通道加权（自动设置 `a_scale_radius = 1` 防止双线性采样溢色，默认关闭以避免破坏 ORM / Mask 等通道打包贴图）。
-  - 法线贴图（`TextureType.Normal`）：自动启用 `MapNormal` 角度误差优化，并按 `GGGR` 通道重排（同时兼容 RGBA 与 BGRA 输入）。
+  - 普通贴图（`TextureType.Default`）：自动处理 `BGRA` 通道重排与 sRGB 色彩空间；支持按需开启 `useAlphaWeight` 透明通道加权（默认关闭以避免破坏 ORM / Mask 等通道打包贴图）。
+  - 法线贴图（`TextureType.Normal`）：按 `GGGR` 通道重排（CPU 自动启用 `MapNormal`，GPU 专用 `CEM_LDR_LUM_ALPHA_DIRECT` + Dual-Plane 独立权重平面编码）。
 
 ---
 
@@ -187,7 +191,33 @@ public void SaveAsAstcFile(Texture2D inputTexture, string outputPath)
 }
 ```
 
-仓库附带示例场景 `Assets/Scenes/SampleScene.unity` 与脚本 `Assets/Scripts/Sample.cs`，可直接打开运行。
+### 5. GPU 实时压缩（零回读 / 支持 `RenderTexture` 与非可读 `Texture2D`）
+
+```csharp
+using Aperture.Astcenc.Runtime;
+using UnityEngine;
+using UnityEngine.Rendering;
+
+public Texture2D CompressOnGpu(Texture source) // 支持 Texture2D（无需 Read/Write）与 RenderTexture
+{
+    // 1. 一站式生成压缩 Texture2D（对齐尺寸自动走零回读 Graphics.CopyTexture，否则走 GPU Buffer 安全回退）
+    return source.CompressToTexture(
+        textureType: TextureType.Default,
+        blockSize: BlockSize.ASTC_6x6,
+        quality: CompressQuality.Fast,
+        includeMipmaps: true,
+        backend: EncodeBackend.Gpu);
+}
+
+public void EncodeIntoAtlas(CommandBuffer cmd, Texture tileSrc, Texture2D astcAtlas, int tileX, int tileY)
+{
+    // 2. 底层 CommandBuffer 录制（支持批处理 / Async Compute / Virtual Texture 子区域编码）
+    Encoder.Encode(cmd, tileSrc, astcAtlas, TextureType.Default, BlockSize.ASTC_4x4, CompressQuality.Fast,
+        sourceMip: 0, destMip: 0, destX: tileX, destY: tileY);
+}
+```
+
+仓库附带示例场景 `Assets/Scenes/SampleScene.unity` 与脚本 `Assets/Scripts/Sample.cs`，可在 Inspector 中直接切换 `EncodeBackend`（`Cpu` / `Gpu` / `Auto`）运行体验。
 
 ---
 
@@ -195,18 +225,23 @@ public void SaveAsAstcFile(Texture2D inputTexture, string outputPath)
 
 所有对外 API 位于命名空间 `Aperture.Astcenc.Runtime` 下。
 
-### `Encoder`（`Texture2D` 扩展方法）
+### `Encoder`（统一压缩入口，支持 `EncodeBackend` 切换）
 
-| 方法 | 说明 |
+| 方法 / 属性 | 说明 |
 | :--- | :--- |
-| `Encoder.IsSupport(Texture texture)` | 检查纹理非空、满足 `isReadable` 且 `graphicsFormat` 受支持 |
-| `Texture2D.Compress(textureType, blockSize, quality, makeNoLongerReadable, threadCount, useAlphaWeight)` | 压缩纹理并原地 `Reinitialize`、`LoadRawTextureData`、`Apply(false, ...)` |
-| `Texture2D.CompressTexture(textureType, blockSize, quality, threadCount, useAlphaWeight)` | 同步压缩全部 Mipmap 至非托管内存，返回 `AstcRaw`（需 `Dispose()`） |
-| `Texture2D.CompressTextureAsync(textureType, blockSize, quality, threadCount, useAlphaWeight, cancellationToken)` | 主线程快照像素 + 后台线程创建上下文并多线程异步压缩，支持 `CancellationToken`（底层调用 `astcenc_compress_cancel`） |
+| `Encoder.IsGpuSupported` | 检测当前设备是否支持 GPU Compute Shader 与 `R32G32B32A32_UInt` 写入 |
+| `Encoder.SupportsGpuDirectCopy(blockSize, srgb, isHdr)` | 检测当前 GPU 是否支持零回读 `CopyTexture` 直出目标 ASTC 格式纹理 |
+| `Encoder.PreloadGpu(blockSize)` / `Encoder.ReleaseGpuCache()` | 预热 GPU Compute Shader（避免首帧编译卡顿）/ 释放临时 RT 缓存池 |
+| `Encoder.IsSupport(Texture texture, [EncodeBackend backend])` | 检查纹理是否满足指定后端要求（GPU 后端无需 `isReadable` 且支持 `RenderTexture`） |
+| `Texture.CompressToTexture(..., backend = EncodeBackend.Auto)` | 压缩任意 2D `Texture` / `RenderTexture` 并返回新的压缩 `Texture2D`（GPU 优先零回读拷贝） |
+| `Encoder.Encode(CommandBuffer cmd, source, destination, ...)` | 向 `CommandBuffer` 录制 GPU ASTC 编码与 `CopyTexture`（支持子区域与自定义 Mip） |
+| `Texture2D.Compress(..., backend = EncodeBackend.Cpu)` | 原地压缩 `Texture2D`（`Gpu` 后端无需 `isReadable`，对齐尺寸走零回读路径） |
+| `Texture2D.CompressTexture(..., backend = EncodeBackend.Cpu)` / `RenderTexture.CompressTexture(...)` | 同步压缩全部 Mipmap 至非托管内存，返回 `AstcRaw`（需 `Dispose()`） |
+| `Texture2D.CompressTextureAsync(..., backend = EncodeBackend.Cpu)` / `RenderTexture.CompressTextureAsync(...)` | 异步压缩（CPU 后台多线程 / GPU `AsyncGPUReadback`），均支持 `CancellationToken` |
 | `Texture2D.LoadRawTextureData(AstcRaw raw)` | 将 `AstcRaw` 中的压缩数据直接加载到目标 `Texture2D` |
-| `Texture2D.EncodeToASTC(textureType, blockSize, quality, threadCount, useAlphaWeight)` | 仅压缩 Mip 0 并写入 16 字节标准 ASTC 文件头，返回托管 `byte[]` |
+| `Texture2D.EncodeToASTC(..., backend = EncodeBackend.Cpu)` / `Texture.EncodeToASTCAsync(..., backend = EncodeBackend.Auto)` | 仅压缩 Mip 0 并写入 16 字节标准 `.astc` 文件头，返回托管 `byte[]`（PC 无 ASTC 采样硬件时亦可走 GPU 高速导出） |
 
-### `AstcContext`（可复用原生编码上下文）
+### `AstcContext`（可复用原生 CPU 编码上下文）
 
 | 成员 | 说明 |
 | :--- | :--- |
@@ -224,11 +259,13 @@ public void SaveAsAstcFile(Texture2D inputTexture, string outputPath)
 
 ### 枚举与配置参数
 
+- **`EncodeBackend`**：`Cpu`（原生 `astc-encoder`）、`Gpu`（Compute Shader 实时编码）、`Auto`（优先 GPU，不支持时自动回退 CPU）
 - **`TextureType`**：`Default`（普通颜色贴图）、`Normal`（法线贴图）
-- **`BlockSize`**（每块固定 16 字节，块越大压缩率越高）：
+- **`BlockSize`**（CPU 与 GPU 均完整支持以下 6 种，每块固定 16 字节）：
   - `ASTC_4x4` (8.00 bpp) / `ASTC_5x5` (5.12 bpp) / `ASTC_6x6` (3.56 bpp) / `ASTC_8x8` (2.00 bpp) / `ASTC_10x10` (1.28 bpp) / `ASTC_12x12` (0.89 bpp)
-- **`CompressQuality`**（映射到 `astcenc` 质量参数 `0 ~ 100`）：
-  - `Fastest` (`0`) / `Fast` (`10`) / `Medium` (`60`) / `Thorough` (`98`) / `VeryThorough` (`99`) / `Exhaustive` (`100`)
+- **`CompressQuality`**：
+  - CPU 后端映射到 `astcenc` 质量参数：`Fastest` (`0`) / `Fast` (`10`) / `Medium` (`60`) / `Thorough` (`98`) / `VeryThorough` (`99`) / `Exhaustive` (`100`)
+  - GPU 后端映射到 3 档策略：`Fastest`/`Fast` → 单最优模式极速档；`Medium` → 最小二乘端点微调 + 多 BlockMode 择优 + RGBA Dual-Plane；`Thorough`~`Exhaustive` → 叠加 16 方向精选 2-Partition 搜索
 - **`CodecFlags`**：映射 `astcenc 5.7.1` 标志位（`MapNormal`、`UseDecodeUnorm8`、`UseAlphaWeight`、`UsePerceptual`、`DecompressOnly`、`SelfDecompressOnly`、`MapRGBM`）
 
 ### 支持的输入格式与目标格式映射
@@ -304,16 +341,25 @@ flowchart TD
 │   │   │   └── x64/astcenc-sse4.1-shared.dll
 │   │   └── Runtime/
 │   │       ├── Aperture.Astcenc.Runtime.asmdef
-│   │       ├── AstcContext.cs             # 可复用编码上下文（多线程 / 异步 / 取消支持）
-│   │       ├── Encoder.cs                 # 核心压缩流程与 Texture2D 扩展方法
+│   │       ├── AstcContext.cs             # 可复用 CPU 编码上下文（多线程 / 异步 / 取消支持）
+│   │       ├── Encoder.cs                 # 统一压缩入口（支持 Cpu / Gpu / Auto 后端切换）
+│   │       ├── EncodeBackend.cs           # 编码后端枚举 (Cpu / Gpu / Auto)
 │   │       ├── AstcRaw.cs                 # 非托管 ASTC 压缩数据封装 (IDisposable)
 │   │       ├── AstcHeader.cs              # 16 字节标准 .astc 文件头工具
 │   │       ├── ImageExtensions.cs         # astcenc_image 零拷贝 / MemCpy / 像素转换 (internal)
 │   │       ├── RawTextureData.cs          # 16 种像素格式无 GC 写入结构体
-│   │       ├── BlockSize.cs               # ASTC 块尺寸枚举
+│   │       ├── BlockSize.cs               # ASTC 块尺寸枚举 (4x4 ~ 12x12)
 │   │       ├── CompressQuality.cs         # 压缩质量预设枚举
 │   │       ├── TextureType.cs             # 贴图类型枚举 (Default / Normal)
 │   │       ├── CodecFlags.cs              # astcenc 编码标志位枚举
+│   │       ├── Gpu/                       # GPU Compute Shader 后端实现
+│   │       │   ├── AstcGpuBackend.cs      # GPU 调度、RT 池、CopyTexture 与 AsyncGPUReadback
+│   │       │   └── Shaders/
+│   │       │       ├── AstcGpuBise.hlsl   # 无大表纯 ALU BISE、量化/反量化与 128-bit 组装
+│   │       │       ├── AstcGpuColor.hlsl  # sRGB、HDR LNS/FP16、2-Partition 哈希与双线性插值
+│   │       │       └── AstcGpuCore.hlsl   # 4x4~12x12、LDR/Normal/HDR 与 Fast/Balanced/High 核
+│   │       ├── Resources/
+│   │       │   └── AstcGpuEncoder.compute # Unity ComputeShader（6 BlockSize × 2 输出目标）
 │   │       └── NativeAPI/                 # Aperture.Astcenc.Runtime.NativeAPI (v5.7.1 P/Invoke)
 │   │           ├── astcenc_api.cs
 │   │           ├── astcenc_config.cs
@@ -325,7 +371,7 @@ flowchart TD
 │   │           └── astcenc_type.cs
 │   ├── Resources/                         # 示例贴图 (Color.png, Normal.png)
 │   ├── Scenes/SampleScene.unity           # 示例场景
-│   └── Scripts/Sample.cs                  # 示例脚本
+│   └── Scripts/Sample.cs                  # 示例脚本（支持 Inspector 切换 Cpu / Gpu / Auto）
 ├── Packages/
 ├── ProjectSettings/
 └── README.md
@@ -336,9 +382,13 @@ flowchart TD
 ## 注意事项
 
 - **非托管内存管理**：直接调用 `CompressTexture` / `CompressTextureAsync` 返回的 `AstcRaw` 持有非托管内存，以及手动创建的 `AstcContext` 均需通过 `using` 或 `Dispose()` 及时释放。
-- **移动端性能建议**：运行时压缩大图建议使用 `CompressTextureAsync` 配合 `Fastest` / `Fast` 质量档位，避免阻塞主线程；批量同格式压缩请复用 `AstcContext`。
+- **GPU 后端平台特性**：
+  - 在支持 ASTC 硬件采样的 GPU（iOS/macOS Apple Silicon Metal、Android Vulkan/GLES 3.1+）上，`CompressToTexture` / `Compress` / `Encoder.Encode` 可直接生成压缩 `Texture2D`（尺寸与 BlockSize 对齐时走零回读 `CopyTexture`，非对齐尺寸或完整 Mip 尾级自动走 GPU Buffer 安全上传）。
+  - 在不支持 ASTC 硬件采样的桌面 GPU（如 Windows D3D11/D3D12）上，仍可使用 GPU 后端通过 `CompressTextureAsync` / `EncodeToASTC` / `EncodeToASTCAsync` 高速生成原始 ASTC 数据或 `.astc` 文件。
+  - 建议在启动或场景切换时调用 `Encoder.PreloadGpu(...)` 预热 Compute Shader，切换场景或不再使用时调用 `Encoder.ReleaseGpuCache()` 释放临时 RT 缓存。
+- **移动端性能建议**：高频/动态贴图推荐优先使用 `EncodeBackend.Gpu` 配合 `CompressQuality.Fast`；CPU 后端压缩大图建议使用 `CompressTextureAsync` 配合 `Fastest` / `Fast` 并复用 `AstcContext`。
 - **异步压缩上下文生命周期**：使用 `context.CompressTextureAsync(...)` 时，请确保在返回的 `Task<AstcRaw>` 完成前不要释放该 `AstcContext`。
-- **透明贴图加权**：对于带透明通道的 UI / Sprite / 植被贴图，建议传入 `useAlphaWeight: true`（自动配合 `a_scale_radius = 1` 减少线性采样边缘溢色）；对于 ORM / Mask 等通道打包贴图保持默认 `useAlphaWeight: false`。
+- **透明贴图加权**：对于带透明通道的 UI / Sprite / 植被贴图，建议传入 `useAlphaWeight: true`；对于 ORM / Mask 等通道打包贴图保持默认 `useAlphaWeight: false`。
 
 ---
 
