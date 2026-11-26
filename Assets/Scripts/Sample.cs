@@ -18,10 +18,10 @@ public class Sample : MonoBehaviour
             {
                 raw.ThrowIfDisposed();
 
-                outputTexture = new Texture2D(inputTexture.width, inputTexture.width, TextureFormat.ASTC_6x6, inputTexture.mipmapCount > 0, false);
+                outputTexture = new Texture2D(inputTexture.width, inputTexture.height, TextureFormat.ASTC_6x6, inputTexture.mipmapCount > 1, false);
                 outputTexture.name = inputTexture.name;
                 outputTexture.LoadRawTextureData(raw);
-                outputTexture.Apply(true, true);
+                outputTexture.Apply(false, true);
             }
         }
 

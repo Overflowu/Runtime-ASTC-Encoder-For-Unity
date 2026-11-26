@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Runtime.InteropServices;
 using Unity.Collections;
 using UnityEngine;
@@ -584,10 +584,10 @@ namespace Aperture.Astcenc.Runtime
 
                 GraphicsFormat graphicsFormat = FitAstcGraphicsFormat(inputTexture.graphicsFormat, blockSize);
 
-                if(inputTexture.Reinitialize(inputTexture.width, inputTexture.height, graphicsFormat, inputTexture.mipmapCount > 0))
+                if(inputTexture.Reinitialize(inputTexture.width, inputTexture.height, graphicsFormat, inputTexture.mipmapCount > 1))
                 {
                     inputTexture.LoadRawTextureData(raw);
-                    inputTexture.Apply(true, makeNoLongerReadable);
+                    inputTexture.Apply(false, makeNoLongerReadable);
 
                     return true;
                 }
