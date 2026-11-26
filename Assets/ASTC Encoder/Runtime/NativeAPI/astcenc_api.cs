@@ -295,18 +295,22 @@ public static class astcenc_api
         else
             astcenc_context_free_none(context);
     }
-#elif UNITY_EDITOR_OSX || UNITY_EDITOR_WIN || (!UNITY_EDITOR && (UNITY_IOS || UNITY_STANDALONE_OSX || UNITY_STANDALONE_WIN))
+#elif UNITY_EDITOR_OSX || UNITY_EDITOR_WIN || UNITY_EDITOR_LINUX || (!UNITY_EDITOR && (UNITY_IOS || UNITY_STANDALONE_OSX || UNITY_STANDALONE_WIN || UNITY_STANDALONE_LINUX))
     internal const bool IsNativeLibraryAvailable = true;
 #if UNITY_EDITOR_OSX
     internal const string LibraryName = "libastcenc-shared";
 #elif UNITY_EDITOR_WIN
     internal const string LibraryName = "astcenc-sse4.1-shared.dll";
+#elif UNITY_EDITOR_LINUX
+    internal const string LibraryName = "libastcenc-sse4.1-shared";
 #elif UNITY_IOS
     internal const string LibraryName = "__Internal";
 #elif UNITY_STANDALONE_OSX
     internal const string LibraryName = "libastcenc-shared";
 #elif UNITY_STANDALONE_WIN
     internal const string LibraryName = "astcenc-sse4.1-shared.dll";
+#elif UNITY_STANDALONE_LINUX
+    internal const string LibraryName = "libastcenc-sse4.1-shared";
 #endif
 
     /**
