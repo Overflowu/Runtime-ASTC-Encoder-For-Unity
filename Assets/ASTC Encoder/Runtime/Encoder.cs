@@ -860,9 +860,22 @@ namespace Aperture.Astcenc.Runtime
         /// <param name="blockSize"></param>
         /// <param name="quality"></param>
         /// <returns></returns>
-        public static byte[] EncodeToASTC(this Texture2D inputTexture, TextureType textureType = TextureType.Default, BlockSize blockSize = BlockSize.ASTC_6x6, CompressQuality quality = CompressQuality.Medium)
+        public static byte[] EncodeToASTC(this Texture2D inputTexture, TextureType textureType = TextureType.Default, BlockSize blockSize = BlockSize.ASTC_6x6, CompressQuality quality = CompressQuality.Medium, int threadCount = 1)
         {
-            using AstcRaw raw = inputTexture.CompressTexture(textureType, blockSize, quality);
+            if (!IsSupport(inputTexture))
+            {
+                Debug.LogError("Texture format is not support or read/write is disabled.");
+                return null;
+            }
+
+            using AstcContext context = AstcContext.Create(inputTexture.graphicsFormat, textureType, blockSize, quality, threadCount);
+            if (context == null)
+            {
+                return null;
+            }
+
+            // Standard .astc file header describes a single image level (mip 0 only)
+            using AstcRaw raw = CompressTextureWithContext(inputTexture, context, textureType, includeMipmaps: false);
 
             if (raw != null)
             {
