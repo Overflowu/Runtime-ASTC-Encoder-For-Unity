@@ -1073,13 +1073,23 @@ uint4 AstcEncodeBlock(uint blockXIdx, uint blockYIdx)
     // ------------------------------------------------------------------------
     if (!isHdr)
     {
+        // AstcLinearToSRGB is monotonic on [0, 1], so converting min/max preserves the exact
+        // range in sRGB code space and prevents dark sRGB gradients from being treated as flat.
+        float4 cmpMin = saturate(rawMin);
+        float4 cmpMax = saturate(rawMax);
+        if (_AstcIsSRGB != 0u)
+        {
+            cmpMin.rgb = AstcLinearToSRGB(rawMin.rgb);
+            cmpMax.rgb = AstcLinearToSRGB(rawMax.rgb);
+        }
+
         bool isConst;
         if (effMode == ASTC_EFF_LDR_NORMAL)
-            isConst = (rawMax.r - rawMin.r < (0.5 / 255.0)) && (rawMax.g - rawMin.g < (0.5 / 255.0));
+            isConst = (cmpMax.r - cmpMin.r < (0.5 / 255.0)) && (cmpMax.g - cmpMin.g < (0.5 / 255.0));
         else if (effMode == ASTC_EFF_LDR_RGB)
-            isConst = all(rawMax.rgb - rawMin.rgb < (0.5 / 255.0));
+            isConst = all(cmpMax.rgb - cmpMin.rgb < (0.5 / 255.0));
         else
-            isConst = all(rawMax - rawMin < (0.5 / 255.0));
+            isConst = all(cmpMax - cmpMin < (0.5 / 255.0));
 
         if (isConst)
         {
