@@ -391,6 +391,7 @@ flowchart TD
 - **移动端性能建议**：高频/动态贴图推荐优先使用 `EncodeBackend.Gpu` 配合 `CompressQuality.Fast`；CPU 后端压缩大图建议使用 `CompressTextureAsync` 配合 `Fastest` / `Fast` 并复用 `AstcContext`。
 - **异步压缩上下文生命周期**：使用 `context.CompressTextureAsync(...)` 时，请确保在返回的 `Task<AstcRaw>` 完成前不要释放该 `AstcContext`。
 - **透明贴图加权**：对于带透明通道的 UI / Sprite / 植被贴图，建议传入 `useAlphaWeight: true`；对于 ORM / Mask 等通道打包贴图保持默认 `useAlphaWeight: false`。
+- **贴图纵向坐标约定**：GPU 与 CPU 后端均直接按 Unity `Texture2D` / `.astc` 规范编码（第 0 行为贴图底部，`y = 0` 不做额外翻转）。Unity 相机渲染或 `Graphics.Blit` 输出的 `RenderTexture` 与 `Texture2D` 布局一致，可直接压缩；若 `RenderTexture` 是由自定义 Compute Shader 按自顶向下坐标写入的，需在压缩前由调用方自行翻转 Y 轴。
 
 ---
 

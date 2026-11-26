@@ -283,6 +283,12 @@ namespace Aperture.Astcenc.Runtime
         /// Compresses any 2D Texture (Texture2D or RenderTexture, without requiring Read/Write on GPU)
         /// into a newly allocated ASTC-compressed Texture2D. Uses zero-readback GPU CopyTexture when supported.
         /// </summary>
+        /// <remarks>
+        /// Row 0 in the encoded ASTC output corresponds to texel y = 0 (bottom-up), matching Unity's Texture2D,
+        /// Graphics.CopyTexture, and standard .astc conventions. RenderTextures rendered by Unity cameras or Blit
+        /// already match this layout; RenderTextures populated by custom compute shaders with top-down coordinates
+        /// should be flipped vertically before encoding.
+        /// </remarks>
         public static Texture2D CompressToTexture(
             this Texture source,
             TextureType textureType = TextureType.Default,
@@ -316,6 +322,11 @@ namespace Aperture.Astcenc.Runtime
         /// Records a GPU ASTC compression dispatch and zero-readback CopyTexture into a CommandBuffer.
         /// Ideal for batching, Async Compute queues, procedural textures, and virtual texture atlas tile updates.
         /// </summary>
+        /// <remarks>
+        /// Row 0 is encoded at texel y = 0 without vertical flipping, matching Unity Texture2D and CopyTexture layout.
+        /// If <paramref name="source"/> is a RenderTexture written by a custom compute shader using top-down y,
+        /// flip it prior to encoding.
+        /// </remarks>
         public static void Encode(
             CommandBuffer cmd,
             Texture source,
