@@ -1,6 +1,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Unity.Jobs;
 using UnityEngine;
 using UnityEngine.Experimental.Rendering;
 using Aperture.Astcenc.Runtime.NativeAPI;
@@ -23,11 +24,45 @@ namespace Aperture.Astcenc.Runtime
         public CompressQuality Quality { get; }
         public int ThreadCount { get; }
 
+        /// <summary>
+        /// When true, schedules multi-threaded astcenc work via Unity's native <see cref="IJobParallelFor"/>
+        /// Worker Thread Pool instead of .NET ThreadPool. Only enable when invoking from the Unity main thread.
+        /// </summary>
+        public bool UseUnityJobSystem { get; set; }
+
         internal uint BlockX { get; }
         internal uint BlockY { get; }
         internal astcenc_profile Profile { get; }
         internal CodecFlags Flags { get; }
         internal bool IsDecompressOnly => (Flags & CodecFlags.DecompressOnly) != 0;
+
+        private unsafe struct AstcCompressParallelJob : IJobParallelFor
+        {
+            public IntPtr Context;
+            public astcenc_image Image;
+            public astcenc_swizzle Swizzle;
+            public IntPtr Output;
+            public UIntPtr OutputLength;
+            public IntPtr FirstErrorPtr;
+
+            public void Execute(int threadIndex)
+            {
+                astcenc_image localImage = Image;
+                astcenc_swizzle localSwizzle = Swizzle;
+                astcenc_error threadStatus = astcenc_api.astcenc_compress_image(
+                    Context,
+                    ref localImage,
+                    ref localSwizzle,
+                    Output,
+                    OutputLength,
+                    (uint)threadIndex);
+
+                if (threadStatus != astcenc_error.ASTCENC_SUCCESS)
+                {
+                    Interlocked.CompareExchange(ref *(int*)FirstErrorPtr, (int)threadStatus, (int)astcenc_error.ASTCENC_SUCCESS);
+                }
+            }
+        }
 
         private AstcContext(
             IntPtr context,
@@ -37,7 +72,8 @@ namespace Aperture.Astcenc.Runtime
             uint blockY,
             CompressQuality quality,
             CodecFlags flags,
-            int threadCount)
+            int threadCount,
+            bool useUnityJobSystem = false)
         {
             m_Context = context;
             Profile = profile;
@@ -47,6 +83,7 @@ namespace Aperture.Astcenc.Runtime
             Quality = quality;
             Flags = flags;
             ThreadCount = threadCount;
+            UseUnityJobSystem = useUnityJobSystem;
             m_Disposed = 0;
         }
 
@@ -69,7 +106,8 @@ namespace Aperture.Astcenc.Runtime
             bool useAlphaWeight = false,
             bool usePerceptual = false,
             uint alphaScaleRadius = 1u,
-            AstcContext parentContext = null)
+            AstcContext parentContext = null,
+            bool useUnityJobSystem = false)
         {
             if (!AstcCpuBackend.IsSupported)
             {
@@ -130,7 +168,7 @@ namespace Aperture.Astcenc.Runtime
                 return null;
             }
 
-            return new AstcContext(context, profile, blockSize, blockX, blockY, quality, flags, resolvedThreads);
+            return new AstcContext(context, profile, blockSize, blockX, blockY, quality, flags, resolvedThreads, useUnityJobSystem);
         }
 
         /// <summary>
@@ -291,6 +329,25 @@ namespace Aperture.Astcenc.Runtime
                         if (ThreadCount == 1 || outputLength <= k_ParallelMinOutputBytes)
                         {
                             status = astcenc_api.astcenc_compress_image(m_Context, ref image, ref swizzle, output, new UIntPtr((uint)outputLength), 0);
+                        }
+                        else if (UseUnityJobSystem)
+                        {
+                            int firstError = (int)astcenc_error.ASTCENC_SUCCESS;
+                            unsafe
+                            {
+                                int* errPtr = &firstError;
+                                var job = new AstcCompressParallelJob
+                                {
+                                    Context = m_Context,
+                                    Image = image,
+                                    Swizzle = swizzle,
+                                    Output = output,
+                                    OutputLength = new UIntPtr((uint)outputLength),
+                                    FirstErrorPtr = (IntPtr)errPtr,
+                                };
+                                job.Schedule(ThreadCount, 1).Complete();
+                            }
+                            status = (astcenc_error)firstError;
                         }
                         else
                         {

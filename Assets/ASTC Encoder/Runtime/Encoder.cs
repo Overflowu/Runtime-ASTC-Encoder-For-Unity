@@ -254,7 +254,7 @@ namespace Aperture.Astcenc.Runtime
 
             if (inputTexture is Texture2D tex2d)
             {
-                return AstcCpuBackend.CompressTextureSync(tex2d, options.TextureType, options.BlockSize, options.Quality, options.ThreadCount, options.IncludeMipmaps, options.UseAlphaWeight, options.UsePerceptual, options.AlphaScaleRadius);
+                return AstcCpuBackend.CompressTextureSync(tex2d, options.TextureType, options.BlockSize, options.Quality, options.ThreadCount, options.IncludeMipmaps, options.UseAlphaWeight, options.UsePerceptual, options.AlphaScaleRadius, options.UseUnityJobSystem);
             }
 
             Debug.LogError("CPU backend only supports readable Texture2D. Use EncodeBackend.Gpu or EncodeBackend.Auto for RenderTexture inputs.");
@@ -379,7 +379,7 @@ namespace Aperture.Astcenc.Runtime
                     return ok;
             }
 
-            return AstcCpuBackend.CompressInPlace(inputTexture, options.TextureType, options.BlockSize, options.Quality, options.MakeNoLongerReadable, options.ThreadCount, options.UseAlphaWeight, options.UsePerceptual, options.AlphaScaleRadius);
+            return AstcCpuBackend.CompressInPlace(inputTexture, options.TextureType, options.BlockSize, options.Quality, options.MakeNoLongerReadable, options.ThreadCount, options.UseAlphaWeight, options.UsePerceptual, options.AlphaScaleRadius, options.UseUnityJobSystem);
         }
 
         /// <summary>
@@ -443,7 +443,7 @@ namespace Aperture.Astcenc.Runtime
 
             if (source is Texture2D tex2d)
             {
-                return AstcCpuBackend.CompressToTexture(tex2d, options.TextureType, options.BlockSize, options.Quality, options.IncludeMipmaps, options.UseAlphaWeight, options.ThreadCount, options.UsePerceptual, options.AlphaScaleRadius);
+                return AstcCpuBackend.CompressToTexture(tex2d, options.TextureType, options.BlockSize, options.Quality, options.IncludeMipmaps, options.UseAlphaWeight, options.ThreadCount, options.UsePerceptual, options.AlphaScaleRadius, options.UseUnityJobSystem);
             }
 
             Debug.LogError("CPU backend only supports readable Texture2D. Use EncodeBackend.Gpu or EncodeBackend.Auto for RenderTexture inputs.");
@@ -605,7 +605,8 @@ namespace Aperture.Astcenc.Runtime
                 options.ThreadCount,
                 options.UseAlphaWeight,
                 options.UsePerceptual,
-                options.AlphaScaleRadius);
+                options.AlphaScaleRadius,
+                options.UseUnityJobSystem);
         }
 
         /// <summary>
@@ -639,7 +640,8 @@ namespace Aperture.Astcenc.Runtime
                     options.ThreadCount,
                     options.UseAlphaWeight,
                     options.UsePerceptual,
-                    options.AlphaScaleRadius);
+                    options.AlphaScaleRadius,
+                    options.UseUnityJobSystem);
             }
         }
 

@@ -56,6 +56,13 @@ namespace Aperture.Astcenc.Runtime
         /// <summary>For in-place <see cref="Encoder.Compress(UnityEngine.Texture2D, AstcCompressOptions)"/>, whether to release CPU pixel memory after uploading.</summary>
         public bool MakeNoLongerReadable;
 
+        /// <summary>
+        /// When true on synchronous main-thread CPU compression calls, dispatches astcenc worker slices
+        /// via Unity's native <see cref="Unity.Jobs.IJobParallelFor"/> Job System instead of .NET ThreadPool.
+        /// Ignored on background async tasks where Unity Job scheduling is disallowed.
+        /// </summary>
+        public bool UseUnityJobSystem;
+
         /// <summary>Default balanced runtime compression options (Default color, ASTC 6x6, Fast, Auto backend).</summary>
         public static AstcCompressOptions Default => new AstcCompressOptions
         {
@@ -70,6 +77,7 @@ namespace Aperture.Astcenc.Runtime
             IncludeMipmaps = true,
             GenerateMipmaps = false,
             MakeNoLongerReadable = true,
+            UseUnityJobSystem = false,
         };
 
         /// <summary>Preset configured for tangent-space normal maps (linear GGGR encoding).</summary>
@@ -86,6 +94,7 @@ namespace Aperture.Astcenc.Runtime
             IncludeMipmaps = true,
             GenerateMipmaps = false,
             MakeNoLongerReadable = true,
+            UseUnityJobSystem = false,
         };
 
         /// <summary>Preset configured for alpha-blended transparent textures (UI, foliage, decals).</summary>
@@ -102,6 +111,7 @@ namespace Aperture.Astcenc.Runtime
             IncludeMipmaps = true,
             GenerateMipmaps = false,
             MakeNoLongerReadable = true,
+            UseUnityJobSystem = false,
         };
     }
 }

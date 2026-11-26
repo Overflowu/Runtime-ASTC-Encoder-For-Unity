@@ -742,7 +742,8 @@ namespace Aperture.Astcenc.Runtime
             bool includeMipmaps = true,
             bool useAlphaWeight = false,
             bool usePerceptual = false,
-            uint alphaScaleRadius = 1u)
+            uint alphaScaleRadius = 1u,
+            bool useUnityJobSystem = false)
         {
             if (!IsSupported)
             {
@@ -764,7 +765,8 @@ namespace Aperture.Astcenc.Runtime
                 threadCount,
                 useAlphaWeight,
                 usePerceptual,
-                alphaScaleRadius);
+                alphaScaleRadius,
+                useUnityJobSystem: useUnityJobSystem);
             if (context == null)
             {
                 return null;
@@ -861,7 +863,8 @@ namespace Aperture.Astcenc.Runtime
             bool useAlphaWeight = false,
             int threadCount = 0,
             bool usePerceptual = false,
-            uint alphaScaleRadius = 1u)
+            uint alphaScaleRadius = 1u,
+            bool useUnityJobSystem = false)
         {
             if (!IsSupported)
             {
@@ -891,7 +894,8 @@ namespace Aperture.Astcenc.Runtime
                 includeMipmaps: includeMipmaps,
                 useAlphaWeight: useAlphaWeight,
                 usePerceptual: usePerceptual,
-                alphaScaleRadius: alphaScaleRadius);
+                alphaScaleRadius: alphaScaleRadius,
+                useUnityJobSystem: useUnityJobSystem);
             if (raw == null)
             {
                 return null;
@@ -998,7 +1002,8 @@ namespace Aperture.Astcenc.Runtime
             int threadCount = 1,
             bool useAlphaWeight = false,
             bool usePerceptual = false,
-            uint alphaScaleRadius = 1u)
+            uint alphaScaleRadius = 1u,
+            bool useUnityJobSystem = false)
         {
             if (!IsSupported)
             {
@@ -1035,7 +1040,8 @@ namespace Aperture.Astcenc.Runtime
                 includeMipmaps: true,
                 useAlphaWeight: useAlphaWeight,
                 usePerceptual: usePerceptual,
-                alphaScaleRadius: alphaScaleRadius);
+                alphaScaleRadius: alphaScaleRadius,
+                useUnityJobSystem: useUnityJobSystem);
             if (raw == null)
             {
                 return false;
@@ -1224,7 +1230,8 @@ namespace Aperture.Astcenc.Runtime
             int threadCount,
             bool useAlphaWeight,
             bool usePerceptual,
-            uint alphaScaleRadius)
+            uint alphaScaleRadius,
+            bool useUnityJobSystem = false)
         {
             if (!IsSupported)
             {
@@ -1252,7 +1259,7 @@ namespace Aperture.Astcenc.Runtime
                 return null;
             }
 
-            using AstcContext ctx = AstcContext.Create(sourceFormat, textureType, blockSize, quality, threadCount, useAlphaWeight, usePerceptual, alphaScaleRadius);
+            using AstcContext ctx = AstcContext.Create(sourceFormat, textureType, blockSize, quality, threadCount, useAlphaWeight, usePerceptual, alphaScaleRadius, useUnityJobSystem: useUnityJobSystem);
             if (ctx == null)
                 return null;
 
