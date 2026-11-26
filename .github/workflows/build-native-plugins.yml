@@ -1,0 +1,278 @@
+name: Build Native ASTC Encoder Plugins
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_binaries:
+        description: 'Commit built binaries directly into Assets/ASTC Encoder/Plugins/ on this branch'
+        required: false
+        default: false
+        type: boolean
+  push:
+    paths:
+      - 'ThirdParty/astc-encoder'
+      - '.github/workflows/build-native-plugins.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows-x64:
+    name: Windows x64 (SSE4.1 DLL)
+    runs-on: windows-2022
+    steps:
+      - name: Checkout repository and astc-encoder submodule
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Configure CMake (Windows x64 SSE4.1)
+        shell: pwsh
+        run: |
+          cmake -S ThirdParty/astc-encoder -B build-win-x64 `
+            -G "Visual Studio 17 2022" -A x64 `
+            -DASTCENC_CLI=OFF `
+            -DASTCENC_SHAREDLIB=ON `
+            -DASTCENC_ISA_SSE41=ON `
+            -DASTCENC_WERROR=OFF `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY="MultiThreaded"
+
+      - name: Build astcenc-sse4.1-shared
+        shell: pwsh
+        run: |
+          cmake --build build-win-x64 --config Release --target astcenc-sse4.1-shared --parallel
+
+      - name: Verify DLL output and exported symbols
+        shell: pwsh
+        run: |
+          $dll = "build-win-x64/Source/Release/astcenc-sse4.1-shared.dll"
+          if (-not (Test-Path $dll)) {
+            throw "Expected DLL not found: $dll"
+          }
+          Get-Item $dll | Select-Object Name, Length
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vcInstall = & $vswhere -latest -property installationPath
+          $dumpbin = Get-ChildItem -Path "$vcInstall\VC\Tools\MSVC" -Filter "dumpbin.exe" -Recurse | Where-Object { $_.FullName -like "*Hostx64\x64*" } | Select-Object -First 1
+          if ($dumpbin) {
+            & $dumpbin.FullName /EXPORTS $dll | Select-String "astcenc_"
+          }
+
+      - name: Upload Windows x64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-windows-x64
+          path: build-win-x64/Source/Release/astcenc-sse4.1-shared.dll
+          if-no-files-found: error
+
+  build-macos-universal:
+    name: macOS Universal (x86_64 + x86_64h + arm64 dylib)
+    runs-on: macos-14
+    steps:
+      - name: Checkout repository and astc-encoder submodule
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Configure CMake (macOS Universal)
+        run: |
+          cmake -S ThirdParty/astc-encoder -B build-macos \
+            -G "Unix Makefiles" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
+            -DASTCENC_CLI=OFF \
+            -DASTCENC_SHAREDLIB=ON \
+            -DASTCENC_UNIVERSAL_BUILD=ON \
+            -DASTCENC_WERROR=OFF
+
+      - name: Build universal libastcenc-shared.dylib
+        run: |
+          cmake --build build-macos --target astcenc-shared --parallel
+
+      - name: Fix install_name and verify dylib
+        run: |
+          DYLIB="build-macos/Source/libastcenc-shared.dylib"
+          test -f "$DYLIB"
+          install_name_tool -id "@rpath/libastcenc-shared.dylib" "$DYLIB"
+          lipo -info "$DYLIB"
+          otool -L "$DYLIB"
+          nm -gU "$DYLIB" | grep "astcenc_config_init"
+
+      - name: Upload macOS Universal artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-macos-universal
+          path: build-macos/Source/libastcenc-shared.dylib
+          if-no-files-found: error
+
+  build-ios-arm64:
+    name: iOS ARM64 (NEON Static Lib)
+    runs-on: macos-14
+    steps:
+      - name: Checkout repository and astc-encoder submodule
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Configure CMake (iOS ARM64 NEON)
+        run: |
+          cmake -S ThirdParty/astc-encoder -B build-ios \
+            -G "Unix Makefiles" \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT=iphoneos \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DASTCENC_CLI=OFF \
+            -DASTCENC_SHAREDLIB=OFF \
+            -DASTCENC_ISA_NEON=ON \
+            -DASTCENC_WERROR=OFF
+
+      - name: Build astcenc-neon-static
+        run: |
+          cmake --build build-ios --target astcenc-neon-static --parallel
+
+      - name: Verify static library
+        run: |
+          LIB="build-ios/Source/libastcenc-neon-static.a"
+          test -f "$LIB"
+          lipo -info "$LIB"
+          nm -gU "$LIB" | grep "astcenc_config_init"
+
+      - name: Upload iOS ARM64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-ios-arm64
+          path: build-ios/Source/libastcenc-neon-static.a
+          if-no-files-found: error
+
+  build-android:
+    name: Android (${{ matrix.abi }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - abi: arm64-v8a
+            isa_flag: -DASTCENC_ISA_NEON=ON
+            target: astcenc-neon-shared
+            output_name: libastcenc-neon-shared.so
+          - abi: armeabi-v7a
+            isa_flag: -DASTCENC_ISA_NONE=ON
+            target: astcenc-none-shared
+            output_name: libastcenc-none-shared.so
+    steps:
+      - name: Checkout repository and astc-encoder submodule
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Locate Android NDK and configure CMake
+        run: |
+          NDK_DIR="${ANDROID_NDK_LATEST_HOME:-${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT}}}"
+          if [ -z "$NDK_DIR" ] || [ ! -d "$NDK_DIR" ]; then
+            echo "Android NDK not found!" >&2
+            exit 1
+          fi
+          echo "NDK_DIR=$NDK_DIR" >> "$GITHUB_ENV"
+          echo "Using Android NDK: $NDK_DIR"
+          cmake -S ThirdParty/astc-encoder -B "build-android-${{ matrix.abi }}" \
+            -DCMAKE_TOOLCHAIN_FILE="$NDK_DIR/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI="${{ matrix.abi }}" \
+            -DANDROID_PLATFORM=android-21 \
+            -DANDROID_STL=c++_static \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-z,max-page-size=16384" \
+            -DASTCENC_CLI=OFF \
+            -DASTCENC_SHAREDLIB=ON \
+            ${{ matrix.isa_flag }} \
+            -DASTCENC_WERROR=OFF
+
+      - name: Build ${{ matrix.target }}
+        run: |
+          cmake --build "build-android-${{ matrix.abi }}" --target "${{ matrix.target }}" --parallel
+
+      - name: Verify shared library
+        run: |
+          SO="build-android-${{ matrix.abi }}/Source/${{ matrix.output_name }}"
+          test -f "$SO"
+          file "$SO"
+          LLVM_BIN="$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          "$LLVM_BIN/llvm-readelf" -l "$SO" | grep LOAD
+          "$LLVM_BIN/llvm-nm" -D --defined-only "$SO" | grep "astcenc_config_init"
+
+      - name: Upload Android ${{ matrix.abi }} artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-android-${{ matrix.abi }}
+          path: build-android-${{ matrix.abi }}/Source/${{ matrix.output_name }}
+          if-no-files-found: error
+
+  package-plugins:
+    name: Package Unity Native Plugins
+    runs-on: ubuntu-latest
+    needs:
+      - build-windows-x64
+      - build-macos-universal
+      - build-ios-arm64
+      - build-android
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository (with LFS when committing)
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+          lfs: ${{ github.event_name == 'workflow_dispatch' && inputs.commit_binaries }}
+
+      - name: Download all platform artifacts into Unity Plugins layout
+        uses: actions/download-artifact@v4
+        with:
+          path: staging
+
+      - name: Assemble Unity Plugins directory
+        run: |
+          mkdir -p \
+            dist/Plugins/x64 \
+            dist/Plugins/Mac \
+            dist/Plugins/iOS \
+            dist/Plugins/Android/arm64-v8a \
+            dist/Plugins/Android/armeabi-v7a
+
+          cp staging/plugin-windows-x64/astcenc-sse4.1-shared.dll dist/Plugins/x64/
+          cp staging/plugin-macos-universal/libastcenc-shared.dylib dist/Plugins/Mac/
+          cp staging/plugin-ios-arm64/libastcenc-neon-static.a dist/Plugins/iOS/
+          cp staging/plugin-android-arm64-v8a/libastcenc-neon-shared.so dist/Plugins/Android/arm64-v8a/
+          cp staging/plugin-android-armeabi-v7a/libastcenc-none-shared.so dist/Plugins/Android/armeabi-v7a/
+
+          VERSION=$(sed -n 's/^project(astcencoder VERSION \([^)]*\)).*/\1/p' ThirdParty/astc-encoder/CMakeLists.txt)
+          VERSION="${VERSION:-unknown}"
+          echo "ASTCENC_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "Built astc-encoder version: $VERSION"
+          find dist/Plugins -type f -exec ls -lh {} +
+
+      - name: Upload combined Unity Plugins artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: astcenc-unity-plugins-${{ env.ASTCENC_VERSION }}
+          path: dist/Plugins/
+          if-no-files-found: error
+
+      - name: Commit updated binaries to branch (optional)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.commit_binaries }}
+        run: |
+          cp dist/Plugins/x64/astcenc-sse4.1-shared.dll "Assets/ASTC Encoder/Plugins/x64/"
+          cp dist/Plugins/Mac/libastcenc-shared.dylib "Assets/ASTC Encoder/Plugins/Mac/"
+          cp dist/Plugins/iOS/libastcenc-neon-static.a "Assets/ASTC Encoder/Plugins/iOS/"
+          cp dist/Plugins/Android/arm64-v8a/libastcenc-neon-shared.so "Assets/ASTC Encoder/Plugins/Android/arm64-v8a/"
+          cp dist/Plugins/Android/armeabi-v7a/libastcenc-none-shared.so "Assets/ASTC Encoder/Plugins/Android/armeabi-v7a/"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add "Assets/ASTC Encoder/Plugins/"
+          if git diff --cached --quiet; then
+            echo "No binary changes detected."
+          else
+            git commit -m "Update prebuilt astc-encoder native plugins to ${ASTCENC_VERSION}"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
