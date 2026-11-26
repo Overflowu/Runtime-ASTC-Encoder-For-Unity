@@ -63,7 +63,8 @@ namespace Aperture.Astcenc.Runtime
             TextureType textureType,
             BlockSize blockSize,
             CompressQuality quality,
-            int threadCount = 1)
+            int threadCount = 1,
+            bool useAlphaWeight = false)
         {
             if (!Encoder.IsSupportGraphicFormat(graphicsFormat))
             {
@@ -83,7 +84,7 @@ namespace Aperture.Astcenc.Runtime
 
             float qualityValue = Encoder.GetQualityValue(quality);
             astcenc_profile profile = Encoder.GetColorProfile(graphicsFormat);
-            CodecFlags flags = Encoder.GetFlags(textureType, graphicsFormat);
+            CodecFlags flags = Encoder.GetFlags(textureType, graphicsFormat, useAlphaWeight);
 
             astcenc_config config = new astcenc_config();
             astcenc_error status = astcenc_api.astcenc_config_init(profile, blockX, blockY, blockZ, qualityValue, (uint)flags, ref config);
@@ -91,6 +92,11 @@ namespace Aperture.Astcenc.Runtime
             {
                 Debug.LogError("Codec config init failed:" + status);
                 return null;
+            }
+
+            if ((flags & CodecFlags.UseAlphaWeight) != 0)
+            {
+                config.a_scale_radius = 1;
             }
 
             IntPtr context = IntPtr.Zero;
@@ -131,8 +137,9 @@ namespace Aperture.Astcenc.Runtime
 
         internal bool IsCompatibleWith(GraphicsFormat graphicsFormat, TextureType textureType)
         {
+            bool isNormalContext = (Flags & CodecFlags.MapNormal) != 0;
             return Encoder.GetColorProfile(graphicsFormat) == Profile
-                && Encoder.GetFlags(textureType, graphicsFormat) == Flags;
+                && isNormalContext == (textureType == TextureType.Normal);
         }
 
         internal astcenc_error CompressSingleImage(ref astcenc_image image, ref astcenc_swizzle swizzle, IntPtr output, int outputLength, CancellationToken cancellationToken = default)

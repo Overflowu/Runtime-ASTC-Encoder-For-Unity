@@ -99,7 +99,24 @@ namespace Aperture.Astcenc.Runtime
             };
         }
 
-        internal static CodecFlags GetFlags(TextureType textureType, GraphicsFormat graphicsFormat)
+        private static bool HasAlphaChannel(GraphicsFormat graphicsFormat)
+        {
+            switch (graphicsFormat)
+            {
+                case GraphicsFormat.R8G8B8A8_UNorm:
+                case GraphicsFormat.R8G8B8A8_SRGB:
+                case GraphicsFormat.B8G8R8A8_UNorm:
+                case GraphicsFormat.B8G8R8A8_SRGB:
+                case GraphicsFormat.R16G16B16A16_UNorm:
+                case GraphicsFormat.R16G16B16A16_SFloat:
+                case GraphicsFormat.R32G32B32A32_SFloat:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        internal static CodecFlags GetFlags(TextureType textureType, GraphicsFormat graphicsFormat, bool useAlphaWeight = false)
         {
             if (textureType == TextureType.Normal)
             {
@@ -108,55 +125,9 @@ namespace Aperture.Astcenc.Runtime
 
             CodecFlags flags = CodecFlags.SelfDecompressOnly;
 
-            switch (graphicsFormat)
+            if (useAlphaWeight && HasAlphaChannel(graphicsFormat))
             {
-                //LDR
-
-                case GraphicsFormat.R8_UNorm:
-                case GraphicsFormat.R8_SRGB:
-                case GraphicsFormat.R8G8_UNorm:
-                case GraphicsFormat.R8G8_SRGB:
-                case GraphicsFormat.R8G8B8_UNorm:
-                case GraphicsFormat.R8G8B8_SRGB:
-                    break;
-                case GraphicsFormat.R8G8B8A8_UNorm:
-                case GraphicsFormat.R8G8B8A8_SRGB:
-                    flags |= CodecFlags.UseAlphaWeight;
-                    break;
-
-                case GraphicsFormat.B8G8R8_UNorm:
-                case GraphicsFormat.B8G8R8_SRGB:
-                    break;
-                case GraphicsFormat.B8G8R8A8_UNorm:
-                case GraphicsFormat.B8G8R8A8_SRGB:
-                    flags |= CodecFlags.UseAlphaWeight;
-                    break;
-
-                case GraphicsFormat.R16_UNorm:
-                case GraphicsFormat.R16G16_UNorm:
-                case GraphicsFormat.R16G16B16_UNorm:
-                    break;
-                case GraphicsFormat.R16G16B16A16_UNorm:
-                    flags |= CodecFlags.UseAlphaWeight;
-                    break;
-
-                //HDR
-
-                case GraphicsFormat.R16_SFloat:
-                case GraphicsFormat.R16G16_SFloat:
-                case GraphicsFormat.R16G16B16_SFloat:
-                    break;
-                case GraphicsFormat.R16G16B16A16_SFloat:
-                    flags |= CodecFlags.UseAlphaWeight;
-                    break;
-
-                case GraphicsFormat.R32_SFloat:
-                case GraphicsFormat.R32G32_SFloat:
-                case GraphicsFormat.R32G32B32_SFloat:
-                    break;
-                case GraphicsFormat.R32G32B32A32_SFloat:
-                    flags |= CodecFlags.UseAlphaWeight;
-                    break;
+                flags |= CodecFlags.UseAlphaWeight;
             }
 
             return flags;
@@ -767,8 +738,9 @@ namespace Aperture.Astcenc.Runtime
         /// <param name="blockSize">Astc compress ratio</param>
         /// <param name="quality">Compress quality setting</param>
         /// <param name="threadCount">Worker thread count (1 = single-threaded, &lt;= 0 = auto)</param>
+        /// <param name="useAlphaWeight">Enable alpha-weighted RGB error optimization (only for transparent textures; leave false for channel-packed maps)</param>
         /// <returns>CompressedData</returns>
-        public static AstcRaw CompressTexture(this Texture2D inputTexture, TextureType textureType, BlockSize blockSize, CompressQuality quality, int threadCount = 1)
+        public static AstcRaw CompressTexture(this Texture2D inputTexture, TextureType textureType, BlockSize blockSize, CompressQuality quality, int threadCount = 1, bool useAlphaWeight = false)
         {
             if (!IsSupport(inputTexture))
             {
@@ -776,7 +748,7 @@ namespace Aperture.Astcenc.Runtime
                 return null;
             }
 
-            using AstcContext context = AstcContext.Create(inputTexture.graphicsFormat, textureType, blockSize, quality, threadCount);
+            using AstcContext context = AstcContext.Create(inputTexture.graphicsFormat, textureType, blockSize, quality, threadCount, useAlphaWeight);
             if (context == null)
             {
                 return null;
@@ -794,9 +766,10 @@ namespace Aperture.Astcenc.Runtime
         /// <param name="blockSize">Astc compress ratio</param>
         /// <param name="quality">Compress quality setting</param>
         /// <param name="threadCount">Worker thread count (&lt;= 0 = auto based on CPU cores)</param>
+        /// <param name="useAlphaWeight">Enable alpha-weighted RGB error optimization (only for transparent textures; leave false for channel-packed maps)</param>
         /// <param name="cancellationToken">Optional cancellation token to abort compression via astcenc_compress_cancel</param>
         /// <returns>Task yielding compressed AstcRaw data or null on failure</returns>
-        public static Task<AstcRaw> CompressTextureAsync(this Texture2D inputTexture, TextureType textureType = TextureType.Default, BlockSize blockSize = BlockSize.ASTC_6x6, CompressQuality quality = CompressQuality.Fast, int threadCount = 0, CancellationToken cancellationToken = default)
+        public static Task<AstcRaw> CompressTextureAsync(this Texture2D inputTexture, TextureType textureType = TextureType.Default, BlockSize blockSize = BlockSize.ASTC_6x6, CompressQuality quality = CompressQuality.Fast, int threadCount = 0, bool useAlphaWeight = false, CancellationToken cancellationToken = default)
         {
             if (cancellationToken.IsCancellationRequested)
             {
@@ -840,7 +813,7 @@ namespace Aperture.Astcenc.Runtime
                 try
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    using AstcContext context = AstcContext.Create(graphicsFormat, textureType, blockSize, quality, threadCount);
+                    using AstcContext context = AstcContext.Create(graphicsFormat, textureType, blockSize, quality, threadCount, useAlphaWeight);
                     if (context == null)
                     {
                         return null;
@@ -879,10 +852,11 @@ namespace Aperture.Astcenc.Runtime
         /// <param name="quality">Compress quality setting</param>
         /// <param name="makeNoLongerReadable">When set to true, Unity discards the copy of pixel data in CPU-addressable memory after this operation.</param>
         /// <param name="threadCount">Worker thread count (1 = single-threaded, &lt;= 0 = auto)</param>
+        /// <param name="useAlphaWeight">Enable alpha-weighted RGB error optimization (only for transparent textures; leave false for channel-packed maps)</param>
         /// <returns>Success or not</returns>
-        public static bool Compress(this Texture2D inputTexture, TextureType textureType = TextureType.Default, BlockSize blockSize = BlockSize.ASTC_6x6, CompressQuality quality = CompressQuality.Fast, bool makeNoLongerReadable = true, int threadCount = 1)
+        public static bool Compress(this Texture2D inputTexture, TextureType textureType = TextureType.Default, BlockSize blockSize = BlockSize.ASTC_6x6, CompressQuality quality = CompressQuality.Fast, bool makeNoLongerReadable = true, int threadCount = 1, bool useAlphaWeight = false)
         {
-            using AstcRaw raw = inputTexture.CompressTexture(textureType, blockSize, quality, threadCount);
+            using AstcRaw raw = inputTexture.CompressTexture(textureType, blockSize, quality, threadCount, useAlphaWeight);
 
             if (raw != null)
             {
@@ -908,8 +882,10 @@ namespace Aperture.Astcenc.Runtime
         /// <param name="textureType"></param>
         /// <param name="blockSize"></param>
         /// <param name="quality"></param>
+        /// <param name="threadCount">Worker thread count (1 = single-threaded, &lt;= 0 = auto)</param>
+        /// <param name="useAlphaWeight">Enable alpha-weighted RGB error optimization (only for transparent textures)</param>
         /// <returns></returns>
-        public static byte[] EncodeToASTC(this Texture2D inputTexture, TextureType textureType = TextureType.Default, BlockSize blockSize = BlockSize.ASTC_6x6, CompressQuality quality = CompressQuality.Medium, int threadCount = 1)
+        public static byte[] EncodeToASTC(this Texture2D inputTexture, TextureType textureType = TextureType.Default, BlockSize blockSize = BlockSize.ASTC_6x6, CompressQuality quality = CompressQuality.Medium, int threadCount = 1, bool useAlphaWeight = false)
         {
             if (!IsSupport(inputTexture))
             {
@@ -917,7 +893,7 @@ namespace Aperture.Astcenc.Runtime
                 return null;
             }
 
-            using AstcContext context = AstcContext.Create(inputTexture.graphicsFormat, textureType, blockSize, quality, threadCount);
+            using AstcContext context = AstcContext.Create(inputTexture.graphicsFormat, textureType, blockSize, quality, threadCount, useAlphaWeight);
             if (context == null)
             {
                 return null;
