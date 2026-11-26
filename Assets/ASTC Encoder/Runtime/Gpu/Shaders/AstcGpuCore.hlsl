@@ -1052,6 +1052,8 @@ uint4 AstcEncodeBlock(uint blockXIdx, uint blockYIdx)
     uint baseX = blockXIdx * BLOCK_X;
     uint baseY = blockYIdx * BLOCK_Y;
 
+    bool isHdr = (_AstcMode == ASTC_MODE_HDR_RGB || _AstcMode == ASTC_MODE_HDR_RGBA);
+
     // ------------------------------------------------------------------------
     // Step 1: Scan raw block stats (Void-Extent check + HDR alpha mode resolution)
     // ------------------------------------------------------------------------
@@ -1066,13 +1068,21 @@ uint4 AstcEncodeBlock(uint blockXIdx, uint blockYIdx)
             uint px = min(baseX + x, _AstcSrcWidth - 1u);
             uint py = min(baseY + y, _AstcSrcHeight - 1u);
             float4 r = _AstcSourceTex.Load(int3(px, py, _AstcMipLevel));
+            if (isHdr)
+            {
+                // Sanitize NaN / Inf / negative values consistently with AstcFloatToLns & AstcFloatToHalfU16
+                // so a single NaN at (0,0) or +Inf cannot corrupt Void-Extent detection.
+                r = float4(
+                    (r.r > 0.0) ? min(r.r, 65504.0) : 0.0,
+                    (r.g > 0.0) ? min(r.g, 65504.0) : 0.0,
+                    (r.b > 0.0) ? min(r.b, 65504.0) : 0.0,
+                    (r.a > 0.0) ? min(r.a, 65504.0) : 0.0);
+            }
             if (x == 0u && y == 0u) rawFirst = r;
             rawMin = min(rawMin, r);
             rawMax = max(rawMax, r);
         }
     }
-
-    bool isHdr = (_AstcMode == ASTC_MODE_HDR_RGB || _AstcMode == ASTC_MODE_HDR_RGBA);
 
     // Resolve effective CEM mode per block
     uint effMode = ASTC_EFF_LDR_RGB;
