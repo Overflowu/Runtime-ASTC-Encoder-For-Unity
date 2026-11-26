@@ -341,7 +341,7 @@ namespace Aperture.Astcenc.Runtime
             return texture.isReadable && IsSupportGraphicFormat(texture.graphicsFormat);
         }
 
-        private static bool CompressRawData<T>(IntPtr context, astcenc_swizzle swizzle, NativeArray<T> raw, int width, int height, int bitness, int mipCount, uint blockX, uint blockY, out IntPtr output, out int size) where T : struct, IRawData
+        private static bool CompressRawData<T>(IntPtr context, astcenc_swizzle swizzle, NativeArray<T> raw, int width, int height, int bitness, int mipCount, uint blockX, uint blockY, bool direct4Channel, out IntPtr output, out int size) where T : unmanaged, IRawData
         {
             //alloc a total memory to hold all ths mipmaps
             int total = 0;
@@ -377,7 +377,14 @@ namespace Aperture.Astcenc.Runtime
                     astcenc_image image = new astcenc_image();
                     try
                     {
-                        image.LoadFrom(mipmapSlice, mipmapWidth, mipmapHeight, bitness);
+                        if (direct4Channel)
+                        {
+                            image.LoadFromDirect(mipmapSlice, mipmapWidth, mipmapHeight, bitness);
+                        }
+                        else
+                        {
+                            image.LoadFrom(mipmapSlice, mipmapWidth, mipmapHeight, bitness);
+                        }
 
                         astcenc_error status = astcenc_api.astcenc_compress_image(context, ref image, ref swizzle, output + byteWrited, new UIntPtr((uint)length), 0);
                         if (status != astcenc_error.ASTCENC_SUCCESS)
@@ -385,13 +392,9 @@ namespace Aperture.Astcenc.Runtime
                             throw new Exception(status.ToString());
                         }
                     }
-                    catch
-                    {
-                        throw;
-                    }
                     finally
                     {
-                        image.Release();
+                        image.Release(ownsSliceMemory: !direct4Channel);
                         astcenc_api.astcenc_compress_reset(context);
                     }
 
@@ -420,13 +423,13 @@ namespace Aperture.Astcenc.Runtime
                 case GraphicsFormat.R8_SRGB:
                     {
                         NativeArray<R8> raw = inputTexture.GetRawTextureData<R8>();
-                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 8, inputTexture.mipmapCount, blockX, blockY, out output, out size);
+                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 8, inputTexture.mipmapCount, blockX, blockY, false, out output, out size);
                     }
                 case GraphicsFormat.R8G8_UNorm:
                 case GraphicsFormat.R8G8_SRGB:
                     {
                         NativeArray<RG8> raw = inputTexture.GetRawTextureData<RG8>();
-                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 8, inputTexture.mipmapCount, blockX, blockY, out output, out size);
+                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 8, inputTexture.mipmapCount, blockX, blockY, false, out output, out size);
                     }
                 case GraphicsFormat.R8G8B8_UNorm:
                 case GraphicsFormat.R8G8B8_SRGB:
@@ -434,7 +437,7 @@ namespace Aperture.Astcenc.Runtime
                 case GraphicsFormat.B8G8R8_SRGB:
                     {
                         NativeArray<RGB8> raw = inputTexture.GetRawTextureData<RGB8>();
-                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 8, inputTexture.mipmapCount, blockX, blockY, out output, out size);
+                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 8, inputTexture.mipmapCount, blockX, blockY, false, out output, out size);
                     }
                 case GraphicsFormat.R8G8B8A8_UNorm:
                 case GraphicsFormat.R8G8B8A8_SRGB:
@@ -442,67 +445,67 @@ namespace Aperture.Astcenc.Runtime
                 case GraphicsFormat.B8G8R8A8_SRGB:
                     {
                         NativeArray<RGBA8> raw = inputTexture.GetRawTextureData<RGBA8>();
-                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 8, inputTexture.mipmapCount, blockX, blockY, out output, out size);
+                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 8, inputTexture.mipmapCount, blockX, blockY, true, out output, out size);
                     }
                 case GraphicsFormat.R16_UNorm:
                     {
                         NativeArray<R16> raw = inputTexture.GetRawTextureData<R16>();
-                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 16, inputTexture.mipmapCount, blockX, blockY, out output, out size);
+                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 16, inputTexture.mipmapCount, blockX, blockY, false, out output, out size);
                     }
                 case GraphicsFormat.R16G16_UNorm:
                     {
                         NativeArray<RG16> raw = inputTexture.GetRawTextureData<RG16>();
-                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 16, inputTexture.mipmapCount, blockX, blockY, out output, out size);
+                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 16, inputTexture.mipmapCount, blockX, blockY, false, out output, out size);
                     }
                 case GraphicsFormat.R16G16B16_UNorm:
                     {
                         NativeArray<RGB16> raw = inputTexture.GetRawTextureData<RGB16>();
-                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 16, inputTexture.mipmapCount, blockX, blockY, out output, out size);
+                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 16, inputTexture.mipmapCount, blockX, blockY, false, out output, out size);
                     }
                 case GraphicsFormat.R16G16B16A16_UNorm:
                     {
                         NativeArray<RGBA16> raw = inputTexture.GetRawTextureData<RGBA16>();
-                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 16, inputTexture.mipmapCount, blockX, blockY, out output, out size);
+                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 16, inputTexture.mipmapCount, blockX, blockY, false, out output, out size);
                     }
                 case GraphicsFormat.R16_SFloat:
                     {
                         NativeArray<R16F> raw = inputTexture.GetRawTextureData<R16F>();
-                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 16, inputTexture.mipmapCount, blockX, blockY, out output, out size);
+                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 16, inputTexture.mipmapCount, blockX, blockY, false, out output, out size);
                     }
                 case GraphicsFormat.R16G16_SFloat:
                     {
                         NativeArray<RG16F> raw = inputTexture.GetRawTextureData<RG16F>();
-                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 16, inputTexture.mipmapCount, blockX, blockY, out output, out size);
+                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 16, inputTexture.mipmapCount, blockX, blockY, false, out output, out size);
                     }
                 case GraphicsFormat.R16G16B16_SFloat:
                     {
                         NativeArray<RGB16F> raw = inputTexture.GetRawTextureData<RGB16F>();
-                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 16, inputTexture.mipmapCount, blockX, blockY, out output, out size);
+                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 16, inputTexture.mipmapCount, blockX, blockY, false, out output, out size);
                     }
                 case GraphicsFormat.R16G16B16A16_SFloat:
                     {
                         NativeArray<RGBA16F> raw = inputTexture.GetRawTextureData<RGBA16F>();
-                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 16, inputTexture.mipmapCount, blockX, blockY, out output, out size);
+                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 16, inputTexture.mipmapCount, blockX, blockY, true, out output, out size);
                     }
                 case GraphicsFormat.R32_SFloat:
                     {
                         NativeArray<R32F> raw = inputTexture.GetRawTextureData<R32F>();
-                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 32, inputTexture.mipmapCount, blockX, blockY, out output, out size);
+                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 32, inputTexture.mipmapCount, blockX, blockY, false, out output, out size);
                     }
                 case GraphicsFormat.R32G32_SFloat:
                     {
                         NativeArray<RG32F> raw = inputTexture.GetRawTextureData<RG32F>();
-                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 32, inputTexture.mipmapCount, blockX, blockY, out output, out size);
+                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 32, inputTexture.mipmapCount, blockX, blockY, false, out output, out size);
                     }
                 case GraphicsFormat.R32G32B32_SFloat:
                     {
                         NativeArray<RGB32F> raw = inputTexture.GetRawTextureData<RGB32F>();
-                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 32, inputTexture.mipmapCount, blockX, blockY, out output, out size);
+                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 32, inputTexture.mipmapCount, blockX, blockY, false, out output, out size);
                     }
                 case GraphicsFormat.R32G32B32A32_SFloat:
                     {
                         NativeArray<RGBA32F> raw = inputTexture.GetRawTextureData<RGBA32F>();
-                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 32, inputTexture.mipmapCount, blockX, blockY, out output, out size);
+                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 32, inputTexture.mipmapCount, blockX, blockY, true, out output, out size);
                     }
             }
 
