@@ -310,6 +310,14 @@ namespace Aperture.Astcenc.Runtime
             }
         }
 
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetStatics()
+        {
+            ReleaseCache();
+            Application.quitting -= ReleaseCache;
+            Application.quitting += ReleaseCache;
+        }
+
         /// <summary>
         /// Drops the cached ComputeShader / kernel references so they are reloaded on next use.
         /// Temporary block render targets are pooled per call (RenderTexture.GetTemporary / CommandBuffer.GetTemporaryRT),
