@@ -13,6 +13,8 @@ public class Sample : MonoBehaviour
     public CompressQuality quality = CompressQuality.Fast;
     public EncodeBackend backend = EncodeBackend.Auto;
 
+    private bool m_OwnsOutputTexture;
+
     void Start()
     {
         if (inputTexture == null)
@@ -24,12 +26,31 @@ public class Sample : MonoBehaviour
             quality,
             includeMipmaps: inputTexture.mipmapCount > 1,
             backend: backend);
+        m_OwnsOutputTexture = outputTexture != null;
 
         byte[] fileData = inputTexture.EncodeToASTC(TextureType.Default, blockSize, quality, backend: backend);
         if (fileData != null)
         {
-            string filePath = Path.Combine(Application.dataPath, "outputTexture.astc");
-            File.WriteAllBytes(filePath, fileData);
+            string outputDir = Application.isEditor ? Application.dataPath : Application.persistentDataPath;
+            string filePath = Path.Combine(outputDir, "outputTexture.astc");
+            try
+            {
+                File.WriteAllBytes(filePath, fileData);
+            }
+            catch (IOException ex)
+            {
+                Debug.LogError($"Failed to write ASTC file to '{filePath}': {ex.Message}");
+            }
+        }
+    }
+
+    void OnDestroy()
+    {
+        if (m_OwnsOutputTexture && outputTexture != null)
+        {
+            Destroy(outputTexture);
+            outputTexture = null;
+            m_OwnsOutputTexture = false;
         }
     }
 }
