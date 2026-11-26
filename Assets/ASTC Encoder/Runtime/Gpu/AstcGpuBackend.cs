@@ -769,6 +769,12 @@ namespace Aperture.Astcenc.Runtime
                 return false;
             }
 
+            if (!inputTexture.isReadable)
+            {
+                Debug.LogError("In-place Compress requires Texture2D.isReadable == true (Unity Texture2D.Reinitialize/LoadRawTextureData requirement). Use CompressToTexture for non-readable textures.");
+                return false;
+            }
+
             GraphicsFormat astcFormat = ResolveTargetAstcFormat(inputTexture.graphicsFormat, textureType, blockSize, out _, out _);
             if (!Encoder.CanCreateAstcTexture(astcFormat))
             {
@@ -837,7 +843,7 @@ namespace Aperture.Astcenc.Runtime
                 }
             }
 
-            // Universal GPU fallback via ComputeBuffer + LoadRawTextureData (no isReadable required!)
+            // Universal GPU fallback via ComputeBuffer + LoadRawTextureData
             using AstcRaw raw = CompressTextureSync(inputTexture, textureType, blockSize, quality, mipCount > 1, useAlphaWeight);
             if (raw == null)
                 return false;

@@ -272,7 +272,7 @@ namespace Aperture.Astcenc.Runtime
         /// <summary>
         /// Compress texture in-place at runtime to ASTC format.
         /// </summary>
-        /// <param name="inputTexture">Input texture (CPU backend requires readable Texture2D; GPU backend supports non-readable Texture2D)</param>
+        /// <param name="inputTexture">Input Texture2D (must have Read/Write enabled for in-place Reinitialize; use CompressToTexture for non-readable textures)</param>
         /// <param name="textureType">Indicate that compress for color texture or normal texture</param>
         /// <param name="blockSize">Astc compress ratio</param>
         /// <param name="quality">Compress quality setting</param>
