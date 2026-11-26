@@ -247,7 +247,7 @@ namespace Aperture.Astcenc.Runtime
 
             if (ShouldUseGpu(inputTexture, options.Backend))
             {
-                AstcRaw gpuRaw = AstcGpuBackend.CompressTextureSync(inputTexture, options.TextureType, options.BlockSize, options.Quality, options.IncludeMipmaps, options.UseAlphaWeight);
+                AstcRaw gpuRaw = AstcGpuBackend.CompressTextureSync(inputTexture, options.TextureType, options.BlockSize, options.Quality, options.IncludeMipmaps, options.UseAlphaWeight, options.GenerateMipmaps);
                 if (gpuRaw != null || !CanFallbackToCpu(inputTexture, options.Backend))
                     return gpuRaw;
             }
@@ -309,7 +309,7 @@ namespace Aperture.Astcenc.Runtime
 
             if (ShouldUseGpu(inputTexture, options.Backend))
             {
-                AstcRaw gpuRaw = await AstcGpuBackend.CompressTextureAsync(inputTexture, options.TextureType, options.BlockSize, options.Quality, options.IncludeMipmaps, options.UseAlphaWeight, cancellationToken);
+                AstcRaw gpuRaw = await AstcGpuBackend.CompressTextureAsync(inputTexture, options.TextureType, options.BlockSize, options.Quality, options.IncludeMipmaps, options.UseAlphaWeight, cancellationToken, options.GenerateMipmaps);
                 if (gpuRaw != null || !CanFallbackToCpu(inputTexture, options.Backend))
                     return gpuRaw;
             }
@@ -374,7 +374,7 @@ namespace Aperture.Astcenc.Runtime
         {
             if (ShouldUseGpu(inputTexture, options.Backend))
             {
-                bool ok = AstcGpuBackend.CompressInPlace(inputTexture, options.TextureType, options.BlockSize, options.Quality, options.MakeNoLongerReadable, options.UseAlphaWeight);
+                bool ok = AstcGpuBackend.CompressInPlace(inputTexture, options.TextureType, options.BlockSize, options.Quality, options.MakeNoLongerReadable, options.UseAlphaWeight, options.GenerateMipmaps);
                 if (ok || !CanFallbackToCpu(inputTexture, options.Backend))
                     return ok;
             }
@@ -436,7 +436,7 @@ namespace Aperture.Astcenc.Runtime
 
             if (ShouldUseGpu(source, options.Backend))
             {
-                Texture2D gpuTex = AstcGpuBackend.CompressToTexture(source, options.TextureType, options.BlockSize, options.Quality, options.IncludeMipmaps, options.UseAlphaWeight);
+                Texture2D gpuTex = AstcGpuBackend.CompressToTexture(source, options.TextureType, options.BlockSize, options.Quality, options.IncludeMipmaps, options.UseAlphaWeight, options.GenerateMipmaps);
                 if (gpuTex != null || !CanFallbackToCpu(source, options.Backend))
                     return gpuTex;
             }
@@ -511,7 +511,7 @@ namespace Aperture.Astcenc.Runtime
 
             if (ShouldUseGpu(source, options.Backend))
             {
-                Texture2D gpuTex = await AstcGpuBackend.CompressToTextureAsync(source, options.TextureType, options.BlockSize, options.Quality, options.IncludeMipmaps, options.UseAlphaWeight, cancellationToken);
+                Texture2D gpuTex = await AstcGpuBackend.CompressToTextureAsync(source, options.TextureType, options.BlockSize, options.Quality, options.IncludeMipmaps, options.UseAlphaWeight, cancellationToken, options.GenerateMipmaps);
                 if (gpuTex != null || !CanFallbackToCpu(source, options.Backend))
                     return gpuTex;
             }

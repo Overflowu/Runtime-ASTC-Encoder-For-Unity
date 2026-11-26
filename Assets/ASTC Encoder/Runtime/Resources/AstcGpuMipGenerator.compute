@@ -1,0 +1,108 @@
+#pragma editor_sync_compilation
+
+#pragma kernel DownsampleColor
+#pragma kernel DownsampleNormal
+
+Texture2D<float4> _MipSrcTex;
+RWTexture2D<float4> _MipDstTex;
+
+uint _MipSrcWidth;
+uint _MipSrcHeight;
+uint _MipDstWidth;
+uint _MipDstHeight;
+uint _MipSrcLevel;
+uint _MipIsSRGBSrc;
+uint _MipIsAlphaWeighted;
+uint _MipIsHdr;
+
+float MipLinearToSRGBScalar(float c)
+{
+    c = saturate(c);
+    return (c <= 0.0031308) ? (c * 12.92) : (1.055 * pow(c, 1.0 / 2.4) - 0.055);
+}
+
+float4 SanitizeHdr(float4 v)
+{
+    return float4(
+        (v.r > 0.0) ? min(v.r, 65504.0) : 0.0,
+        (v.g > 0.0) ? min(v.g, 65504.0) : 0.0,
+        (v.b > 0.0) ? min(v.b, 65504.0) : 0.0,
+        (v.a > 0.0) ? min(v.a, 65504.0) : 0.0);
+}
+
+[numthreads(8, 8, 1)]
+void DownsampleColor(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _MipDstWidth || id.y >= _MipDstHeight)
+        return;
+
+    uint sx0 = id.x * 2u;
+    uint sy0 = id.y * 2u;
+    uint sx1 = min(sx0 + 1u, _MipSrcWidth - 1u);
+    uint sy1 = min(sy0 + 1u, _MipSrcHeight - 1u);
+
+    float4 c00 = _MipSrcTex.Load(int3(sx0, sy0, _MipSrcLevel));
+    float4 c10 = _MipSrcTex.Load(int3(sx1, sy0, _MipSrcLevel));
+    float4 c01 = _MipSrcTex.Load(int3(sx0, sy1, _MipSrcLevel));
+    float4 c11 = _MipSrcTex.Load(int3(sx1, sy1, _MipSrcLevel));
+
+    if (_MipIsHdr != 0u)
+    {
+        c00 = SanitizeHdr(c00);
+        c10 = SanitizeHdr(c10);
+        c01 = SanitizeHdr(c01);
+        c11 = SanitizeHdr(c11);
+    }
+
+    float4 result;
+    if (_MipIsAlphaWeighted != 0u && _MipIsHdr == 0u)
+    {
+        // Premultiplied alpha-weighted box filter prevents dark fringe bleed on transparent borders.
+        float w00 = saturate(c00.a);
+        float w10 = saturate(c10.a);
+        float w01 = saturate(c01.a);
+        float w11 = saturate(c11.a);
+        float sumW = w00 + w10 + w01 + w11;
+        float3 rgb = (sumW > 1e-5)
+            ? ((c00.rgb * w00 + c10.rgb * w10 + c01.rgb * w01 + c11.rgb * w11) / sumW)
+            : (0.25 * (c00.rgb + c10.rgb + c01.rgb + c11.rgb));
+        result = float4(rgb, 0.25 * sumW);
+    }
+    else
+    {
+        result = 0.25 * (c00 + c10 + c01 + c11);
+    }
+
+    _MipDstTex[id.xy] = result;
+}
+
+float3 UnpackTangentNormal(float4 raw)
+{
+    float nx = (_MipIsSRGBSrc != 0u) ? MipLinearToSRGBScalar(raw.r) : saturate(raw.r);
+    float ny = (_MipIsSRGBSrc != 0u) ? MipLinearToSRGBScalar(raw.g) : saturate(raw.g);
+    float2 xy = float2(nx, ny) * 2.0 - 1.0;
+    float z = sqrt(saturate(1.0 - dot(xy, xy)));
+    return float3(xy, z);
+}
+
+[numthreads(8, 8, 1)]
+void DownsampleNormal(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _MipDstWidth || id.y >= _MipDstHeight)
+        return;
+
+    uint sx0 = id.x * 2u;
+    uint sy0 = id.y * 2u;
+    uint sx1 = min(sx0 + 1u, _MipSrcWidth - 1u);
+    uint sy1 = min(sy0 + 1u, _MipSrcHeight - 1u);
+
+    float3 n = UnpackTangentNormal(_MipSrcTex.Load(int3(sx0, sy0, _MipSrcLevel)))
+             + UnpackTangentNormal(_MipSrcTex.Load(int3(sx1, sy0, _MipSrcLevel)))
+             + UnpackTangentNormal(_MipSrcTex.Load(int3(sx0, sy1, _MipSrcLevel)))
+             + UnpackTangentNormal(_MipSrcTex.Load(int3(sx1, sy1, _MipSrcLevel)));
+
+    float len = length(n);
+    n = (len > 1e-5) ? (n / len) : float3(0.0, 0.0, 1.0);
+    float2 enc = saturate(n.xy * 0.5 + 0.5);
+    _MipDstTex[id.xy] = float4(enc.x, enc.y, 1.0, 1.0);
+}

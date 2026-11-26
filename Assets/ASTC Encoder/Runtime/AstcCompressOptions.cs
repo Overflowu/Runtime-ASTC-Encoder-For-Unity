@@ -47,6 +47,12 @@ namespace Aperture.Astcenc.Runtime
         /// <summary>Whether to encode all mipmap levels present on the input texture (ignored by single-level .astc export).</summary>
         public bool IncludeMipmaps;
 
+        /// <summary>
+        /// When true and using the GPU backend on a single-mip source texture, automatically generates a full
+        /// sRGB-aware / normal-renormalizing mipmap chain on the GPU and compresses all levels in one pass.
+        /// </summary>
+        public bool GenerateMipmaps;
+
         /// <summary>For in-place <see cref="Encoder.Compress(UnityEngine.Texture2D, AstcCompressOptions)"/>, whether to release CPU pixel memory after uploading.</summary>
         public bool MakeNoLongerReadable;
 
@@ -62,6 +68,7 @@ namespace Aperture.Astcenc.Runtime
             AlphaScaleRadius = 1u,
             UsePerceptual = false,
             IncludeMipmaps = true,
+            GenerateMipmaps = false,
             MakeNoLongerReadable = true,
         };
 
@@ -77,6 +84,7 @@ namespace Aperture.Astcenc.Runtime
             AlphaScaleRadius = 0u,
             UsePerceptual = false,
             IncludeMipmaps = true,
+            GenerateMipmaps = false,
             MakeNoLongerReadable = true,
         };
 
@@ -92,6 +100,7 @@ namespace Aperture.Astcenc.Runtime
             AlphaScaleRadius = 1u,
             UsePerceptual = false,
             IncludeMipmaps = true,
+            GenerateMipmaps = false,
             MakeNoLongerReadable = true,
         };
     }
