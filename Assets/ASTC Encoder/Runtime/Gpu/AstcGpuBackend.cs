@@ -503,6 +503,11 @@ namespace Aperture.Astcenc.Runtime
                 return Task.FromResult<AstcRaw>(null);
             }
 
+            if (!SystemInfo.supportsAsyncGPUReadback)
+            {
+                return Task.FromResult(CompressTextureSync(source, textureType, blockSize, quality, includeMipmaps, useAlphaWeight));
+            }
+
             int mipCount = includeMipmaps ? Math.Max(1, source.mipmapCount) : 1;
             ComputeBuffer buffer = DispatchAllMipsToBuffer(source, textureType, blockSize, quality, mipCount, useAlphaWeight, out int totalBytes);
             if (buffer == null || totalBytes <= 0)
