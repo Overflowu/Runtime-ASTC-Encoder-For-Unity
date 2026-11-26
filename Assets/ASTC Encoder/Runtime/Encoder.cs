@@ -322,6 +322,8 @@ namespace Aperture.Astcenc.Runtime
         /// Records a GPU ASTC compression dispatch and zero-readback CopyTexture into a CommandBuffer.
         /// Ideal for batching, Async Compute queues, procedural textures, and virtual texture atlas tile updates.
         /// </summary>
+        /// <param name="destX">Destination X offset in texels (must be a non-negative multiple of the ASTC block width).</param>
+        /// <param name="destY">Destination Y offset in texels (must be a non-negative multiple of the ASTC block height).</param>
         /// <remarks>
         /// Row 0 is encoded at texel y = 0 without vertical flipping, matching Unity Texture2D and CopyTexture layout.
         /// If <paramref name="source"/> is a RenderTexture written by a custom compute shader using top-down y,

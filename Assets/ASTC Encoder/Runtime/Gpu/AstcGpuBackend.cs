@@ -621,14 +621,44 @@ namespace Aperture.Astcenc.Runtime
             if (!IsSupported)
                 throw new NotSupportedException("GPU ASTC compression is not supported on this device.");
 
+            if (!IsInputSupported(source))
+                throw new ArgumentException("Source texture is not a supported 2D texture for GPU ASTC encoding.", nameof(source));
+
             int slot = BlockSizeToSlot(blockSize);
             if (slot < 0 || !Encoder.GetBlockSize(blockSize, out uint bx, out uint by, out _))
                 throw new ArgumentException($"Unsupported ASTC block size: {blockSize}", nameof(blockSize));
+
+            GraphicsFormat dstFormat = destination.graphicsFormat;
+            if (dstFormat != GetAstcGraphicsFormat(blockSize, false, false)
+                && dstFormat != GetAstcGraphicsFormat(blockSize, true, false)
+                && dstFormat != GetAstcGraphicsFormat(blockSize, false, true))
+            {
+                throw new ArgumentException($"Destination texture format '{dstFormat}' does not match ASTC block size {blockSize}.", nameof(destination));
+            }
+
+            int srcMipCount = Math.Max(1, source.mipmapCount);
+            if (sourceMip < 0 || sourceMip >= srcMipCount)
+                throw new ArgumentOutOfRangeException(nameof(sourceMip), sourceMip, $"sourceMip must be in [0, {srcMipCount - 1}].");
+
+            int dstMipCount = Math.Max(1, destination.mipmapCount);
+            if (destMip < 0 || destMip >= dstMipCount)
+                throw new ArgumentOutOfRangeException(nameof(destMip), destMip, $"destMip must be in [0, {dstMipCount - 1}].");
 
             int mipW = Math.Max(1, source.width >> sourceMip);
             int mipH = Math.Max(1, source.height >> sourceMip);
             int blockCountX = (mipW + (int)bx - 1) / (int)bx;
             int blockCountY = (mipH + (int)by - 1) / (int)by;
+
+            int dstMipW = Math.Max(1, destination.width >> destMip);
+            int dstMipH = Math.Max(1, destination.height >> destMip);
+            int alignedDstW = ((dstMipW + (int)bx - 1) / (int)bx) * (int)bx;
+            int alignedDstH = ((dstMipH + (int)by - 1) / (int)by) * (int)by;
+
+            if (destX < 0 || (destX % (int)bx) != 0 || destX + blockCountX * (int)bx > alignedDstW)
+                throw new ArgumentOutOfRangeException(nameof(destX), destX, $"destX must be a non-negative multiple of {bx} and fit within destination mip width {dstMipW}.");
+
+            if (destY < 0 || (destY % (int)by) != 0 || destY + blockCountY * (int)by > alignedDstH)
+                throw new ArgumentOutOfRangeException(nameof(destY), destY, $"destY must be a non-negative multiple of {by} and fit within destination mip height {dstMipH}.");
 
             uint mode = ResolveShaderMode(source.graphicsFormat, textureType, out bool isSRGB, out _);
             uint qualityTier = MapQualityTier(quality);
