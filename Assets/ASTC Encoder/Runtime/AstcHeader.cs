@@ -60,6 +60,66 @@ namespace Aperture.Astcenc.Runtime
             buffer[offset + 15] = (byte)((sizeZ >> 16) & 0xFF);
         }
 
+        /// <summary>
+        /// Parses a 16-byte standard .astc header from <paramref name="buffer"/> at <paramref name="offset"/>.
+        /// Returns false if the buffer is too small, the magic constant does not match, or dimensions are zero.
+        /// </summary>
+        public static bool TryParse(
+            byte[] buffer,
+            int offset,
+            out uint dimX,
+            out uint dimY,
+            out uint dimZ,
+            out int sizeX,
+            out int sizeY,
+            out int sizeZ)
+        {
+            dimX = dimY = dimZ = 0;
+            sizeX = sizeY = sizeZ = 0;
+
+            if (buffer == null || offset < 0 || buffer.Length - offset < HeaderSize)
+                return false;
+
+            uint magic = (uint)buffer[offset + 0]
+                | ((uint)buffer[offset + 1] << 8)
+                | ((uint)buffer[offset + 2] << 16)
+                | ((uint)buffer[offset + 3] << 24);
+
+            if (magic != MAGIC_FILE_CONSTANT)
+                return false;
+
+            dimX = buffer[offset + 4];
+            dimY = buffer[offset + 5];
+            dimZ = buffer[offset + 6];
+
+            sizeX = buffer[offset + 7] | (buffer[offset + 8] << 8) | (buffer[offset + 9] << 16);
+            sizeY = buffer[offset + 10] | (buffer[offset + 11] << 8) | (buffer[offset + 12] << 16);
+            sizeZ = buffer[offset + 13] | (buffer[offset + 14] << 8) | (buffer[offset + 15] << 16);
+
+            return dimX > 0 && dimY > 0 && dimZ > 0 && sizeX > 0 && sizeY > 0 && sizeZ > 0;
+        }
+
+        /// <summary>
+        /// Maps 2D ASTC block dimensions to the corresponding <see cref="BlockSize"/> enum value.
+        /// </summary>
+        public static bool TryMapBlockSize(uint dimX, uint dimY, uint dimZ, out BlockSize blockSize)
+        {
+            blockSize = BlockSize.ASTC_None;
+            if (dimZ != 1 || dimX != dimY)
+                return false;
+
+            switch (dimX)
+            {
+                case 4: blockSize = BlockSize.ASTC_4x4; return true;
+                case 5: blockSize = BlockSize.ASTC_5x5; return true;
+                case 6: blockSize = BlockSize.ASTC_6x6; return true;
+                case 8: blockSize = BlockSize.ASTC_8x8; return true;
+                case 10: blockSize = BlockSize.ASTC_10x10; return true;
+                case 12: blockSize = BlockSize.ASTC_12x12; return true;
+                default: return false;
+            }
+        }
+
         public void CopyTo(byte[] destination, int destinationOffset = 0)
         {
             ThrowIfDisposed();

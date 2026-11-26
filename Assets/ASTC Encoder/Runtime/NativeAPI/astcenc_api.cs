@@ -78,6 +78,32 @@ public static class astcenc_api
     private static extern astcenc_error astcenc_compress_cancel_none(
         IntPtr context);
 
+    [DllImport(NeonLibraryName, EntryPoint = "astcenc_decompress_image", CallingConvention = CallingConvention.Cdecl)]
+    private static extern astcenc_error astcenc_decompress_image_neon(
+        IntPtr context,
+        IntPtr data,
+        UIntPtr data_len,
+        ref astcenc_image image_out,
+        ref astcenc_swizzle swizzle,
+        uint thread_index);
+
+    [DllImport(NoneLibraryName, EntryPoint = "astcenc_decompress_image", CallingConvention = CallingConvention.Cdecl)]
+    private static extern astcenc_error astcenc_decompress_image_none(
+        IntPtr context,
+        IntPtr data,
+        UIntPtr data_len,
+        ref astcenc_image image_out,
+        ref astcenc_swizzle swizzle,
+        uint thread_index);
+
+    [DllImport(NeonLibraryName, EntryPoint = "astcenc_decompress_reset", CallingConvention = CallingConvention.Cdecl)]
+    private static extern astcenc_error astcenc_decompress_reset_neon(
+        IntPtr context);
+
+    [DllImport(NoneLibraryName, EntryPoint = "astcenc_decompress_reset", CallingConvention = CallingConvention.Cdecl)]
+    private static extern astcenc_error astcenc_decompress_reset_none(
+        IntPtr context);
+
     [DllImport(NeonLibraryName, EntryPoint = "astcenc_context_free", CallingConvention = CallingConvention.Cdecl)]
     private static extern void astcenc_context_free_neon(
         IntPtr context);
@@ -217,6 +243,46 @@ public static class astcenc_api
     }
 
     /**
+     * @brief Decompress an image.
+     *
+     * @param      context        Codec context.
+     * @param[in]  data           Pointer to compressed data.
+     * @param      data_len       Length of the compressed data array.
+     * @param[out] image_out      Output image.
+     * @param[in]  swizzle        Decompression data swizzle, applied after decompression.
+     * @param      thread_index   Thread index [0..N-1] of calling thread.
+     *
+     * @return @c ASTCENC_SUCCESS on success, or an error if decompression failed.
+     */
+    public static astcenc_error astcenc_decompress_image(
+        IntPtr context,
+        IntPtr data,
+        UIntPtr data_len,
+        ref astcenc_image image_out,
+        ref astcenc_swizzle swizzle,
+        uint thread_index)
+    {
+        return IntPtr.Size == 8
+            ? astcenc_decompress_image_neon(context, data, data_len, ref image_out, ref swizzle, thread_index)
+            : astcenc_decompress_image_none(context, data, data_len, ref image_out, ref swizzle, thread_index);
+    }
+
+    /**
+     * @brief Reset the codec state for a new decompression.
+     *
+     * @param context   Codec context.
+     *
+     * @return @c ASTCENC_SUCCESS on success, or an error if reset failed.
+     */
+    public static astcenc_error astcenc_decompress_reset(
+        IntPtr context)
+    {
+        return IntPtr.Size == 8
+            ? astcenc_decompress_reset_neon(context)
+            : astcenc_decompress_reset_none(context);
+    }
+
+    /**
      * Free the compressor context.
      *
      * @param context   The codec context.
@@ -353,6 +419,38 @@ public static class astcenc_api
         IntPtr context);
 
     /**
+     * @brief Decompress an image.
+     *
+     * @param      context        Codec context.
+     * @param[in]  data           Pointer to compressed data.
+     * @param      data_len       Length of the compressed data array.
+     * @param[out] image_out      Output image.
+     * @param[in]  swizzle        Decompression data swizzle, applied after decompression.
+     * @param      thread_index   Thread index [0..N-1] of calling thread.
+     *
+     * @return @c ASTCENC_SUCCESS on success, or an error if decompression failed.
+     */
+    [DllImport(LibraryName, EntryPoint = "astcenc_decompress_image", CallingConvention = CallingConvention.Cdecl)]
+    public static extern astcenc_error astcenc_decompress_image(
+        IntPtr context,
+        IntPtr data,
+        UIntPtr data_len,
+        ref astcenc_image image_out,
+        ref astcenc_swizzle swizzle,
+        uint thread_index);
+
+    /**
+     * @brief Reset the codec state for a new decompression.
+     *
+     * @param context   Codec context.
+     *
+     * @return @c ASTCENC_SUCCESS on success, or an error if reset failed.
+     */
+    [DllImport(LibraryName, EntryPoint = "astcenc_decompress_reset", CallingConvention = CallingConvention.Cdecl)]
+    public static extern astcenc_error astcenc_decompress_reset(
+        IntPtr context);
+
+    /**
      * Free the compressor context.
      *
      * @param context   The codec context.
@@ -390,6 +488,17 @@ public static class astcenc_api
         IntPtr context) => astcenc_error.ASTCENC_ERR_NOT_IMPLEMENTED;
 
     public static astcenc_error astcenc_compress_cancel(
+        IntPtr context) => astcenc_error.ASTCENC_ERR_NOT_IMPLEMENTED;
+
+    public static astcenc_error astcenc_decompress_image(
+        IntPtr context,
+        IntPtr data,
+        UIntPtr data_len,
+        ref astcenc_image image_out,
+        ref astcenc_swizzle swizzle,
+        uint thread_index) => astcenc_error.ASTCENC_ERR_NOT_IMPLEMENTED;
+
+    public static astcenc_error astcenc_decompress_reset(
         IntPtr context) => astcenc_error.ASTCENC_ERR_NOT_IMPLEMENTED;
 
     public static void astcenc_context_free(
