@@ -844,13 +844,7 @@ namespace Aperture.Astcenc.Runtime
                         int blockW = (mipW + (int)bx - 1) / (int)bx;
                         int blockH = (mipH + (int)by - 1) / (int)by;
 
-                        var desc = new RenderTextureDescriptor(blockW, blockH, GraphicsFormat.R32G32B32A32_UInt, 0)
-                        {
-                            enableRandomWrite = true,
-                            useMipMap = false,
-                            autoGenerateMips = false,
-                        };
-                        RenderTexture rt = RenderTexture.GetTemporary(desc);
+                        RenderTexture rt = RenderTexture.GetTemporary(CreateBlockRTDescriptor(blockW, blockH));
                         rt.Create();
                         mipRTs[mip] = rt;
 
