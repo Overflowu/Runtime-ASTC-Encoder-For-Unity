@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Runtime.InteropServices;
 using UnityEngine;
 
@@ -9,6 +9,26 @@ namespace Aperture.Astcenc.Runtime
         void WriteTo(IntPtr destPtr);
     }
 
+    internal static class RawDataConstants
+    {
+        internal const int ByteAlphaOneMask = unchecked((int)0xFF000000);
+        internal const short HalfOne = 0x3C00;
+        internal const int FloatOneBits = 0x3F800000;
+
+        [StructLayout(LayoutKind.Explicit)]
+        private struct FloatUIntUnion
+        {
+            [FieldOffset(0)] public uint UIntValue;
+            [FieldOffset(0)] public float FloatValue;
+        }
+
+        internal static float UIntBitsToSingle(uint bits)
+        {
+            return new FloatUIntUnion { UIntValue = bits }.FloatValue;
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     public struct R8 : IRawData
     {
         public float RFloat
@@ -22,13 +42,11 @@ namespace Aperture.Astcenc.Runtime
 
         public void WriteTo(IntPtr destPtr)
         {
-            Marshal.WriteByte(destPtr + 0, m_R);
-            Marshal.WriteByte(destPtr + 1, 0);
-            Marshal.WriteByte(destPtr + 2, 0);
-            Marshal.WriteByte(destPtr + 3, 0xFF);
+            Marshal.WriteInt32(destPtr, RawDataConstants.ByteAlphaOneMask | m_R);
         }
     }
 
+    [StructLayout(LayoutKind.Sequential)]
     public struct RG8 : IRawData
     {
         public float RFloat
@@ -51,13 +69,11 @@ namespace Aperture.Astcenc.Runtime
 
         public void WriteTo(IntPtr destPtr)
         {
-            Marshal.WriteByte(destPtr + 0, m_R);
-            Marshal.WriteByte(destPtr + 1, m_G);
-            Marshal.WriteByte(destPtr + 2, 0);
-            Marshal.WriteByte(destPtr + 3, 0xFF);
+            Marshal.WriteInt32(destPtr, RawDataConstants.ByteAlphaOneMask | m_R | (m_G << 8));
         }
     }
 
+    [StructLayout(LayoutKind.Sequential)]
     public struct RGB8 : IRawData
     {
         public float RFloat
@@ -89,13 +105,11 @@ namespace Aperture.Astcenc.Runtime
 
         public void WriteTo(IntPtr destPtr)
         {
-            Marshal.WriteByte(destPtr + 0, m_R);
-            Marshal.WriteByte(destPtr + 1, m_G);
-            Marshal.WriteByte(destPtr + 2, m_B);
-            Marshal.WriteByte(destPtr + 3, 0xFF);
+            Marshal.WriteInt32(destPtr, RawDataConstants.ByteAlphaOneMask | m_R | (m_G << 8) | (m_B << 16));
         }
     }
 
+    [StructLayout(LayoutKind.Sequential)]
     public struct RGBA8 : IRawData
     {
         public float RFloat
@@ -136,13 +150,11 @@ namespace Aperture.Astcenc.Runtime
 
         public void WriteTo(IntPtr destPtr)
         {
-            Marshal.WriteByte(destPtr + 0, m_R);
-            Marshal.WriteByte(destPtr + 1, m_G);
-            Marshal.WriteByte(destPtr + 2, m_B);
-            Marshal.WriteByte(destPtr + 3, m_A);
+            Marshal.WriteInt32(destPtr, unchecked(m_R | (m_G << 8) | (m_B << 16) | (m_A << 24)));
         }
     }
 
+    [StructLayout(LayoutKind.Sequential)]
     public struct R16 : IRawData
     {
         internal ushort RHalf
@@ -164,21 +176,14 @@ namespace Aperture.Astcenc.Runtime
 
         public void WriteTo(IntPtr destPtr)
         {
-            byte[] r = BitConverter.GetBytes(RHalf);
-            Marshal.WriteByte(destPtr + 0, r[0]);
-            Marshal.WriteByte(destPtr + 1, r[1]);
-
-            Marshal.WriteByte(destPtr + 2, 0);
-            Marshal.WriteByte(destPtr + 3, 0);
-
-            Marshal.WriteByte(destPtr + 4, 0);
-            Marshal.WriteByte(destPtr + 5, 0);
-
-            Marshal.WriteByte(destPtr + 6, 0x00);
-            Marshal.WriteByte(destPtr + 7, 0x3C);
+            Marshal.WriteInt16(destPtr, 0, unchecked((short)RHalf));
+            Marshal.WriteInt16(destPtr, 2, 0);
+            Marshal.WriteInt16(destPtr, 4, 0);
+            Marshal.WriteInt16(destPtr, 6, RawDataConstants.HalfOne);
         }
     }
 
+    [StructLayout(LayoutKind.Sequential)]
     public struct RG16 : IRawData
     {
         internal ushort RHalf
@@ -217,22 +222,14 @@ namespace Aperture.Astcenc.Runtime
 
         public void WriteTo(IntPtr destPtr)
         {
-            byte[] r = BitConverter.GetBytes(RHalf);
-            Marshal.WriteByte(destPtr + 0, r[0]);
-            Marshal.WriteByte(destPtr + 1, r[1]);
-
-            byte[] g = BitConverter.GetBytes(GHalf);
-            Marshal.WriteByte(destPtr + 2, g[0]);
-            Marshal.WriteByte(destPtr + 3, g[1]);
-
-            Marshal.WriteByte(destPtr + 4, 0);
-            Marshal.WriteByte(destPtr + 5, 0);
-
-            Marshal.WriteByte(destPtr + 6, 0x00);
-            Marshal.WriteByte(destPtr + 7, 0x3C);
+            Marshal.WriteInt16(destPtr, 0, unchecked((short)RHalf));
+            Marshal.WriteInt16(destPtr, 2, unchecked((short)GHalf));
+            Marshal.WriteInt16(destPtr, 4, 0);
+            Marshal.WriteInt16(destPtr, 6, RawDataConstants.HalfOne);
         }
     }
 
+    [StructLayout(LayoutKind.Sequential)]
     public struct RGB16 : IRawData
     {
         internal ushort RHalf
@@ -288,23 +285,14 @@ namespace Aperture.Astcenc.Runtime
 
         public void WriteTo(IntPtr destPtr)
         {
-            byte[] r = BitConverter.GetBytes(RHalf);
-            Marshal.WriteByte(destPtr + 0, r[0]);
-            Marshal.WriteByte(destPtr + 1, r[1]);
-
-            byte[] g = BitConverter.GetBytes(GHalf);
-            Marshal.WriteByte(destPtr + 2, g[0]);
-            Marshal.WriteByte(destPtr + 3, g[1]);
-
-            byte[] b = BitConverter.GetBytes(BHalf);
-            Marshal.WriteByte(destPtr + 4, b[0]);
-            Marshal.WriteByte(destPtr + 5, b[1]);
-
-            Marshal.WriteByte(destPtr + 6, 0x00);
-            Marshal.WriteByte(destPtr + 7, 0x3C);
+            Marshal.WriteInt16(destPtr, 0, unchecked((short)RHalf));
+            Marshal.WriteInt16(destPtr, 2, unchecked((short)GHalf));
+            Marshal.WriteInt16(destPtr, 4, unchecked((short)BHalf));
+            Marshal.WriteInt16(destPtr, 6, RawDataConstants.HalfOne);
         }
     }
 
+    [StructLayout(LayoutKind.Sequential)]
     public struct RGBA16 : IRawData
     {
         internal ushort RHalf
@@ -377,24 +365,14 @@ namespace Aperture.Astcenc.Runtime
 
         public void WriteTo(IntPtr destPtr)
         {
-            byte[] r = BitConverter.GetBytes(RHalf);
-            Marshal.WriteByte(destPtr + 0, r[0]);
-            Marshal.WriteByte(destPtr + 1, r[1]);
-
-            byte[] g = BitConverter.GetBytes(GHalf);
-            Marshal.WriteByte(destPtr + 2, g[0]);
-            Marshal.WriteByte(destPtr + 3, g[1]);
-
-            byte[] b = BitConverter.GetBytes(BHalf);
-            Marshal.WriteByte(destPtr + 4, b[0]);
-            Marshal.WriteByte(destPtr + 5, b[1]);
-
-            byte[] a = BitConverter.GetBytes(AHalf);
-            Marshal.WriteByte(destPtr + 6, a[0]);
-            Marshal.WriteByte(destPtr + 7, a[1]);
+            Marshal.WriteInt16(destPtr, 0, unchecked((short)RHalf));
+            Marshal.WriteInt16(destPtr, 2, unchecked((short)GHalf));
+            Marshal.WriteInt16(destPtr, 4, unchecked((short)BHalf));
+            Marshal.WriteInt16(destPtr, 6, unchecked((short)AHalf));
         }
     }
 
+    [StructLayout(LayoutKind.Sequential)]
     public struct R16F : IRawData
     {
         public float RFloat
@@ -408,21 +386,14 @@ namespace Aperture.Astcenc.Runtime
 
         public void WriteTo(IntPtr destPtr)
         {
-            byte[] r = BitConverter.GetBytes(m_R);
-            Marshal.WriteByte(destPtr + 0, r[0]);
-            Marshal.WriteByte(destPtr + 1, r[1]);
-
-            Marshal.WriteByte(destPtr + 2, 0);
-            Marshal.WriteByte(destPtr + 3, 0);
-
-            Marshal.WriteByte(destPtr + 4, 0);
-            Marshal.WriteByte(destPtr + 5, 0);
-
-            Marshal.WriteByte(destPtr + 6, 0x00);
-            Marshal.WriteByte(destPtr + 7, 0x3C);
+            Marshal.WriteInt16(destPtr, 0, unchecked((short)m_R));
+            Marshal.WriteInt16(destPtr, 2, 0);
+            Marshal.WriteInt16(destPtr, 4, 0);
+            Marshal.WriteInt16(destPtr, 6, RawDataConstants.HalfOne);
         }
     }
 
+    [StructLayout(LayoutKind.Sequential)]
     public struct RG16F : IRawData
     {
         public float RFloat
@@ -445,22 +416,14 @@ namespace Aperture.Astcenc.Runtime
 
         public void WriteTo(IntPtr destPtr)
         {
-            byte[] r = BitConverter.GetBytes(m_R);
-            Marshal.WriteByte(destPtr + 0, r[0]);
-            Marshal.WriteByte(destPtr + 1, r[1]);
-
-            byte[] g = BitConverter.GetBytes(m_G);
-            Marshal.WriteByte(destPtr + 2, g[0]);
-            Marshal.WriteByte(destPtr + 3, g[1]);
-
-            Marshal.WriteByte(destPtr + 4, 0);
-            Marshal.WriteByte(destPtr + 5, 0);
-
-            Marshal.WriteByte(destPtr + 6, 0x00);
-            Marshal.WriteByte(destPtr + 7, 0x3C);
+            Marshal.WriteInt16(destPtr, 0, unchecked((short)m_R));
+            Marshal.WriteInt16(destPtr, 2, unchecked((short)m_G));
+            Marshal.WriteInt16(destPtr, 4, 0);
+            Marshal.WriteInt16(destPtr, 6, RawDataConstants.HalfOne);
         }
     }
 
+    [StructLayout(LayoutKind.Sequential)]
     public struct RGB16F : IRawData
     {
         public float RFloat
@@ -488,27 +451,18 @@ namespace Aperture.Astcenc.Runtime
                 return Mathf.HalfToFloat(m_B);
             }
         }
-        public ushort m_B;
+        private ushort m_B;
 
         public void WriteTo(IntPtr destPtr)
         {
-            byte[] r = BitConverter.GetBytes(m_R);
-            Marshal.WriteByte(destPtr + 0, r[0]);
-            Marshal.WriteByte(destPtr + 1, r[1]);
-
-            byte[] g = BitConverter.GetBytes(m_G);
-            Marshal.WriteByte(destPtr + 2, g[0]);
-            Marshal.WriteByte(destPtr + 3, g[1]);
-
-            byte[] b = BitConverter.GetBytes(m_B);
-            Marshal.WriteByte(destPtr + 4, b[0]);
-            Marshal.WriteByte(destPtr + 5, b[1]);
-
-            Marshal.WriteByte(destPtr + 6, 0x00);
-            Marshal.WriteByte(destPtr + 7, 0x3C);
+            Marshal.WriteInt16(destPtr, 0, unchecked((short)m_R));
+            Marshal.WriteInt16(destPtr, 2, unchecked((short)m_G));
+            Marshal.WriteInt16(destPtr, 4, unchecked((short)m_B));
+            Marshal.WriteInt16(destPtr, 6, RawDataConstants.HalfOne);
         }
     }
 
+    [StructLayout(LayoutKind.Sequential)]
     public struct RGBA16F : IRawData
     {
         public float RFloat
@@ -549,68 +503,42 @@ namespace Aperture.Astcenc.Runtime
 
         public void WriteTo(IntPtr destPtr)
         {
-            byte[] r = BitConverter.GetBytes(m_R);
-            Marshal.WriteByte(destPtr + 0, r[0]);
-            Marshal.WriteByte(destPtr + 1, r[1]);
-
-            byte[] g = BitConverter.GetBytes(m_G);
-            Marshal.WriteByte(destPtr + 2, g[0]);
-            Marshal.WriteByte(destPtr + 3, g[1]);
-
-            byte[] b = BitConverter.GetBytes(m_B);
-            Marshal.WriteByte(destPtr + 4, b[0]);
-            Marshal.WriteByte(destPtr + 5, b[1]);
-
-            byte[] a = BitConverter.GetBytes(m_A);
-            Marshal.WriteByte(destPtr + 6, a[0]);
-            Marshal.WriteByte(destPtr + 7, a[1]);
+            Marshal.WriteInt16(destPtr, 0, unchecked((short)m_R));
+            Marshal.WriteInt16(destPtr, 2, unchecked((short)m_G));
+            Marshal.WriteInt16(destPtr, 4, unchecked((short)m_B));
+            Marshal.WriteInt16(destPtr, 6, unchecked((short)m_A));
         }
     }
 
+    [StructLayout(LayoutKind.Sequential)]
     public struct R32F : IRawData
     {
         public float RFloat
         {
             get
             {
-                return BitConverter.ToSingle(BitConverter.GetBytes(m_R));
+                return RawDataConstants.UIntBitsToSingle(m_R);
             }
         }
         private uint m_R;
 
         public void WriteTo(IntPtr destPtr)
         {
-            byte[] r = BitConverter.GetBytes(m_R);
-            Marshal.WriteByte(destPtr + 0, r[0]);
-            Marshal.WriteByte(destPtr + 1, r[1]);
-            Marshal.WriteByte(destPtr + 2, r[2]);
-            Marshal.WriteByte(destPtr + 3, r[3]);
-
-            Marshal.WriteByte(destPtr + 4,  0);
-            Marshal.WriteByte(destPtr + 5,  0);
-            Marshal.WriteByte(destPtr + 6,  0);
-            Marshal.WriteByte(destPtr + 7,  0);
-
-            Marshal.WriteByte(destPtr + 8,  0);
-            Marshal.WriteByte(destPtr + 9,  0);
-            Marshal.WriteByte(destPtr + 10, 0);
-            Marshal.WriteByte(destPtr + 11, 0);
-
-            Marshal.WriteByte(destPtr + 12, 0);
-            Marshal.WriteByte(destPtr + 13, 0);
-            Marshal.WriteByte(destPtr + 14, 0x80);
-            Marshal.WriteByte(destPtr + 15, 0x3F);
-
+            Marshal.WriteInt32(destPtr, 0, unchecked((int)m_R));
+            Marshal.WriteInt32(destPtr, 4, 0);
+            Marshal.WriteInt32(destPtr, 8, 0);
+            Marshal.WriteInt32(destPtr, 12, RawDataConstants.FloatOneBits);
         }
     }
 
+    [StructLayout(LayoutKind.Sequential)]
     public struct RG32F : IRawData
     {
         public float RFloat
         {
             get
             {
-                return BitConverter.ToSingle(BitConverter.GetBytes(m_R));
+                return RawDataConstants.UIntBitsToSingle(m_R);
             }
         }
         private uint m_R;
@@ -619,44 +547,28 @@ namespace Aperture.Astcenc.Runtime
         {
             get
             {
-                return BitConverter.ToSingle(BitConverter.GetBytes(m_G));
+                return RawDataConstants.UIntBitsToSingle(m_G);
             }
         }
         private uint m_G;
 
         public void WriteTo(IntPtr destPtr)
         {
-            byte[] r = BitConverter.GetBytes(m_R);
-            Marshal.WriteByte(destPtr + 0, r[0]);
-            Marshal.WriteByte(destPtr + 1, r[1]);
-            Marshal.WriteByte(destPtr + 2, r[2]);
-            Marshal.WriteByte(destPtr + 3, r[3]);
-
-            byte[] g = BitConverter.GetBytes(m_G);
-            Marshal.WriteByte(destPtr + 4, g[0]);
-            Marshal.WriteByte(destPtr + 5, g[1]);
-            Marshal.WriteByte(destPtr + 6, g[2]);
-            Marshal.WriteByte(destPtr + 7, g[3]);
-
-            Marshal.WriteByte(destPtr + 8,  0);
-            Marshal.WriteByte(destPtr + 9,  0);
-            Marshal.WriteByte(destPtr + 10, 0);
-            Marshal.WriteByte(destPtr + 11, 0);
-
-            Marshal.WriteByte(destPtr + 12, 0);
-            Marshal.WriteByte(destPtr + 13, 0);
-            Marshal.WriteByte(destPtr + 14, 0x80);
-            Marshal.WriteByte(destPtr + 15, 0x3F);
+            Marshal.WriteInt32(destPtr, 0, unchecked((int)m_R));
+            Marshal.WriteInt32(destPtr, 4, unchecked((int)m_G));
+            Marshal.WriteInt32(destPtr, 8, 0);
+            Marshal.WriteInt32(destPtr, 12, RawDataConstants.FloatOneBits);
         }
     }
 
+    [StructLayout(LayoutKind.Sequential)]
     public struct RGB32F : IRawData
     {
         public float RFloat
         {
             get
             {
-                return BitConverter.ToSingle(BitConverter.GetBytes(m_R));
+                return RawDataConstants.UIntBitsToSingle(m_R);
             }
         }
         private uint m_R;
@@ -665,7 +577,7 @@ namespace Aperture.Astcenc.Runtime
         {
             get
             {
-                return BitConverter.ToSingle(BitConverter.GetBytes(m_G));
+                return RawDataConstants.UIntBitsToSingle(m_G);
             }
         }
         private uint m_G;
@@ -674,45 +586,28 @@ namespace Aperture.Astcenc.Runtime
         {
             get
             {
-                return BitConverter.ToSingle(BitConverter.GetBytes(m_B));
+                return RawDataConstants.UIntBitsToSingle(m_B);
             }
         }
         private uint m_B;
 
         public void WriteTo(IntPtr destPtr)
         {
-            byte[] r = BitConverter.GetBytes(m_R);
-            Marshal.WriteByte(destPtr + 0, r[0]);
-            Marshal.WriteByte(destPtr + 1, r[1]);
-            Marshal.WriteByte(destPtr + 2, r[2]);
-            Marshal.WriteByte(destPtr + 3, r[3]);
-
-            byte[] g = BitConverter.GetBytes(m_G);
-            Marshal.WriteByte(destPtr + 4, g[0]);
-            Marshal.WriteByte(destPtr + 5, g[1]);
-            Marshal.WriteByte(destPtr + 6, g[2]);
-            Marshal.WriteByte(destPtr + 7, g[3]);
-
-            byte[] b = BitConverter.GetBytes(m_B);
-            Marshal.WriteByte(destPtr + 8,  b[0]);
-            Marshal.WriteByte(destPtr + 9,  b[1]);
-            Marshal.WriteByte(destPtr + 10, b[2]);
-            Marshal.WriteByte(destPtr + 11, b[3]);
-
-            Marshal.WriteByte(destPtr + 12, 0);
-            Marshal.WriteByte(destPtr + 13, 0);
-            Marshal.WriteByte(destPtr + 14, 0x80);
-            Marshal.WriteByte(destPtr + 15, 0x3F);
+            Marshal.WriteInt32(destPtr, 0, unchecked((int)m_R));
+            Marshal.WriteInt32(destPtr, 4, unchecked((int)m_G));
+            Marshal.WriteInt32(destPtr, 8, unchecked((int)m_B));
+            Marshal.WriteInt32(destPtr, 12, RawDataConstants.FloatOneBits);
         }
     }
 
+    [StructLayout(LayoutKind.Sequential)]
     public struct RGBA32F : IRawData
     {
         public float RFloat
         {
             get
             {
-                return BitConverter.ToSingle(BitConverter.GetBytes(m_R));
+                return RawDataConstants.UIntBitsToSingle(m_R);
             }
         }
         private uint m_R;
@@ -721,7 +616,7 @@ namespace Aperture.Astcenc.Runtime
         {
             get
             {
-                return BitConverter.ToSingle(BitConverter.GetBytes(m_G));
+                return RawDataConstants.UIntBitsToSingle(m_G);
             }
         }
         private uint m_G;
@@ -730,7 +625,7 @@ namespace Aperture.Astcenc.Runtime
         {
             get
             {
-                return BitConverter.ToSingle(BitConverter.GetBytes(m_B));
+                return RawDataConstants.UIntBitsToSingle(m_B);
             }
         }
         private uint m_B;
@@ -739,37 +634,17 @@ namespace Aperture.Astcenc.Runtime
         {
             get
             {
-                return BitConverter.ToSingle(BitConverter.GetBytes(m_A));
+                return RawDataConstants.UIntBitsToSingle(m_A);
             }
         }
         private uint m_A;
 
         public void WriteTo(IntPtr destPtr)
         {
-            byte[] r = BitConverter.GetBytes(m_R);
-            Marshal.WriteByte(destPtr + 0, r[0]);
-            Marshal.WriteByte(destPtr + 1, r[1]);
-            Marshal.WriteByte(destPtr + 2, r[2]);
-            Marshal.WriteByte(destPtr + 3, r[3]);
-
-            byte[] g = BitConverter.GetBytes(m_G);
-            Marshal.WriteByte(destPtr + 4, g[0]);
-            Marshal.WriteByte(destPtr + 5, g[1]);
-            Marshal.WriteByte(destPtr + 6, g[2]);
-            Marshal.WriteByte(destPtr + 7, g[3]);
-
-            byte[] b = BitConverter.GetBytes(m_B);
-            Marshal.WriteByte(destPtr + 8,  b[0]);
-            Marshal.WriteByte(destPtr + 9,  b[1]);
-            Marshal.WriteByte(destPtr + 10, b[2]);
-            Marshal.WriteByte(destPtr + 11, b[3]);
-
-            byte[] a = BitConverter.GetBytes(m_A);
-            Marshal.WriteByte(destPtr + 12, a[0]);
-            Marshal.WriteByte(destPtr + 13, a[1]);
-            Marshal.WriteByte(destPtr + 14, a[2]);
-            Marshal.WriteByte(destPtr + 15, a[3]);
-
+            Marshal.WriteInt32(destPtr, 0, unchecked((int)m_R));
+            Marshal.WriteInt32(destPtr, 4, unchecked((int)m_G));
+            Marshal.WriteInt32(destPtr, 8, unchecked((int)m_B));
+            Marshal.WriteInt32(destPtr, 12, unchecked((int)m_A));
         }
     }
 }
