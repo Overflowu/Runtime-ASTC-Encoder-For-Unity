@@ -352,6 +352,8 @@ flowchart TD
 │   │       ├── CompressQuality.cs         # 压缩质量预设枚举
 │   │       ├── TextureType.cs             # 贴图类型枚举 (Default / Normal)
 │   │       ├── CodecFlags.cs              # astcenc 编码标志位枚举
+│   │       ├── Cpu/                       # CPU 原生后端实现 (astc-encoder P/Invoke)
+│   │       │   └── AstcCpuBackend.cs      # CPU 同步/异步压缩、快照、原地与新纹理封装
 │   │       ├── Gpu/                       # GPU Compute Shader 后端实现
 │   │       │   ├── AstcGpuBackend.cs      # GPU 调度、RT 池、CopyTexture 与 AsyncGPUReadback
 │   │       │   └── Shaders/

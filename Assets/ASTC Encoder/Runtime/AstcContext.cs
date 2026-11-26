@@ -66,7 +66,7 @@ namespace Aperture.Astcenc.Runtime
             int threadCount = 1,
             bool useAlphaWeight = false)
         {
-            if (!Encoder.IsSupportGraphicFormat(graphicsFormat))
+            if (!AstcCpuBackend.IsSupportGraphicFormat(graphicsFormat))
             {
                 Debug.LogError("Unsupported GraphicsFormat: " + graphicsFormat);
                 return null;
@@ -82,9 +82,9 @@ namespace Aperture.Astcenc.Runtime
                 ? Math.Max(1, Math.Min(Environment.ProcessorCount, 4))
                 : threadCount;
 
-            float qualityValue = Encoder.GetQualityValue(quality);
-            astcenc_profile profile = Encoder.GetColorProfile(graphicsFormat);
-            CodecFlags flags = Encoder.GetFlags(textureType, graphicsFormat, useAlphaWeight);
+            float qualityValue = AstcCpuBackend.GetQualityValue(quality);
+            astcenc_profile profile = AstcCpuBackend.GetColorProfile(graphicsFormat);
+            CodecFlags flags = AstcCpuBackend.GetFlags(textureType, graphicsFormat, useAlphaWeight);
 
             astcenc_config config = new astcenc_config();
             astcenc_error status = astcenc_api.astcenc_config_init(profile, blockX, blockY, blockZ, qualityValue, (uint)flags, ref config);
@@ -122,7 +122,7 @@ namespace Aperture.Astcenc.Runtime
         public AstcRaw CompressTexture(Texture2D inputTexture, TextureType textureType = TextureType.Default)
         {
             ThrowIfDisposed();
-            return Encoder.CompressTextureWithContext(inputTexture, this, textureType, true);
+            return AstcCpuBackend.CompressTextureWithContext(inputTexture, this, textureType, true);
         }
 
         /// <summary>
@@ -132,13 +132,13 @@ namespace Aperture.Astcenc.Runtime
         public Task<AstcRaw> CompressTextureAsync(Texture2D inputTexture, TextureType textureType = TextureType.Default, CancellationToken cancellationToken = default)
         {
             ThrowIfDisposed();
-            return Encoder.CompressTextureWithContextAsync(inputTexture, this, textureType, true, cancellationToken);
+            return AstcCpuBackend.CompressTextureWithContextAsync(inputTexture, this, textureType, true, cancellationToken);
         }
 
         internal bool IsCompatibleWith(GraphicsFormat graphicsFormat, TextureType textureType)
         {
             bool isNormalContext = (Flags & CodecFlags.MapNormal) != 0;
-            return Encoder.GetColorProfile(graphicsFormat) == Profile
+            return AstcCpuBackend.GetColorProfile(graphicsFormat) == Profile
                 && isNormalContext == (textureType == TextureType.Normal);
         }
 
