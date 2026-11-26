@@ -1,5 +1,6 @@
 using System;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using Unity.Collections;
 using UnityEngine;
 using UnityEngine.Experimental.Rendering;
@@ -10,7 +11,7 @@ namespace Aperture.Astcenc.Runtime
     {
         private const int k_BytePerBlock = 16;
 
-        private static bool GetBlockSize(BlockSize size, out uint x, out uint y, out uint z)
+        internal static bool GetBlockSize(BlockSize size, out uint x, out uint y, out uint z)
         {
             switch (size)
             {
@@ -43,7 +44,7 @@ namespace Aperture.Astcenc.Runtime
             return false;
         }
 
-        private static float GetQualityValue(CompressQuality quality)
+        internal static float GetQualityValue(CompressQuality quality)
         {
             return quality switch
             {
@@ -57,7 +58,7 @@ namespace Aperture.Astcenc.Runtime
             };
         }
 
-        private static astcenc_profile GetColorProfile(GraphicsFormat graphicsFormat)
+        internal static astcenc_profile GetColorProfile(GraphicsFormat graphicsFormat)
         {
             return graphicsFormat switch
             {
@@ -96,14 +97,14 @@ namespace Aperture.Astcenc.Runtime
             };
         }
 
-        private static CodecFlags GetFlags(TextureType textureType, GraphicsFormat graphicsFormat)
+        internal static CodecFlags GetFlags(TextureType textureType, GraphicsFormat graphicsFormat)
         {
             if (textureType == TextureType.Normal)
             {
-                return CodecFlags.MapNormal;
+                return CodecFlags.MapNormal | CodecFlags.SelfDecompressOnly;
             }
 
-            CodecFlags flags = CodecFlags.None;
+            CodecFlags flags = CodecFlags.SelfDecompressOnly;
 
             switch (graphicsFormat)
             {
@@ -295,7 +296,7 @@ namespace Aperture.Astcenc.Runtime
             throw new ArgumentException();
         }
 
-        private static bool IsSupportGraphicFormat(GraphicsFormat graphicsFormat)
+        internal static bool IsSupportGraphicFormat(GraphicsFormat graphicsFormat)
         {
             switch (graphicsFormat)
             {
@@ -338,22 +339,28 @@ namespace Aperture.Astcenc.Runtime
 
         public static bool IsSupport(Texture texture)
         {
-            return texture.isReadable && IsSupportGraphicFormat(texture.graphicsFormat);
+            return texture != null && texture.isReadable && IsSupportGraphicFormat(texture.graphicsFormat);
         }
 
-        private static bool CompressRawData<T>(IntPtr context, astcenc_swizzle swizzle, NativeArray<T> raw, int width, int height, int bitness, int mipCount, uint blockX, uint blockY, bool direct4Channel, out IntPtr output, out int size) where T : unmanaged, IRawData
+        private static int CalculateMipByteLength(int mipWidth, int mipHeight, uint blockX, uint blockY)
         {
-            //alloc a total memory to hold all ths mipmaps
+            int blockCountX = (mipWidth + (int)blockX - 1) / (int)blockX;
+            int blockCountY = (mipHeight + (int)blockY - 1) / (int)blockY;
+            return blockCountX * blockCountY * k_BytePerBlock;
+        }
+
+        private static bool CompressRawData<T>(AstcContext context, astcenc_swizzle swizzle, NativeArray<T> raw, int width, int height, int bitness, int mipCount, bool direct4Channel, out IntPtr output, out int size) where T : unmanaged, IRawData
+        {
+            uint blockX = context.BlockX;
+            uint blockY = context.BlockY;
+
+            //alloc a total memory to hold all the mipmaps
             int total = 0;
             for (int i = 0; i < mipCount; i++)
             {
                 int mipmapWidth = Math.Max(1, width >> i);
                 int mipmapHeight = Math.Max(1, height >> i);
-                int blockCountX = (mipmapWidth + (int)blockX - 1) / (int)blockX;
-                int blockCountY = (mipmapHeight + (int)blockY - 1) / (int)blockY;
-                int length = blockCountX * blockCountY * k_BytePerBlock;
-
-                total += length;
+                total += CalculateMipByteLength(mipmapWidth, mipmapHeight, blockX, blockY);
             }
             output = Marshal.AllocHGlobal(total);
             size = total;
@@ -367,9 +374,7 @@ namespace Aperture.Astcenc.Runtime
                 {
                     int mipmapWidth = Math.Max(1, width >> i);
                     int mipmapHeight = Math.Max(1, height >> i);
-                    int blockCountX = (mipmapWidth + (int)blockX - 1) / (int)blockX;
-                    int blockCountY = (mipmapHeight + (int)blockY - 1) / (int)blockY;
-                    int length = blockCountX * blockCountY * k_BytePerBlock;
+                    int length = CalculateMipByteLength(mipmapWidth, mipmapHeight, blockX, blockY);
 
                     int count = mipmapWidth * mipmapHeight;
                     NativeSlice<T> mipmapSlice = raw.Slice(elementReaded, count);
@@ -386,7 +391,7 @@ namespace Aperture.Astcenc.Runtime
                             image.LoadFrom(mipmapSlice, mipmapWidth, mipmapHeight, bitness);
                         }
 
-                        astcenc_error status = astcenc_api.astcenc_compress_image(context, ref image, ref swizzle, output + byteWrited, new UIntPtr((uint)length), 0);
+                        astcenc_error status = context.CompressSingleImage(ref image, ref swizzle, output + byteWrited, length);
                         if (status != astcenc_error.ASTCENC_SUCCESS)
                         {
                             throw new Exception(status.ToString());
@@ -395,7 +400,6 @@ namespace Aperture.Astcenc.Runtime
                     finally
                     {
                         image.Release(ownsSliceMemory: !direct4Channel);
-                        astcenc_api.astcenc_compress_reset(context);
                     }
 
                     elementReaded += count;
@@ -415,21 +419,155 @@ namespace Aperture.Astcenc.Runtime
             return true;
         }
 
-        private static bool CompressImage(Texture2D inputTexture, IntPtr context, astcenc_swizzle swizzle, uint blockX, uint blockY, out IntPtr output, out int size)
+        private static astcenc_image[] SnapshotRawData<T>(NativeArray<T> raw, int width, int height, int bitness, int mipCount, bool direct4Channel) where T : unmanaged, IRawData
         {
+            astcenc_image[] images = new astcenc_image[mipCount];
+            int elementReaded = 0;
+            try
+            {
+                for (int i = 0; i < mipCount; i++)
+                {
+                    int mipmapWidth = Math.Max(1, width >> i);
+                    int mipmapHeight = Math.Max(1, height >> i);
+                    int count = mipmapWidth * mipmapHeight;
+                    NativeSlice<T> mipmapSlice = raw.Slice(elementReaded, count);
+
+                    astcenc_image image = new astcenc_image();
+                    if (direct4Channel)
+                    {
+                        image.LoadFromCopy(mipmapSlice, mipmapWidth, mipmapHeight, bitness);
+                    }
+                    else
+                    {
+                        image.LoadFrom(mipmapSlice, mipmapWidth, mipmapHeight, bitness);
+                    }
+                    images[i] = image;
+                    elementReaded += count;
+                }
+                return images;
+            }
+            catch
+            {
+                ReleaseSnapshots(images);
+                throw;
+            }
+        }
+
+        private static void ReleaseSnapshots(astcenc_image[] images)
+        {
+            if (images == null)
+                return;
+
+            for (int i = 0; i < images.Length; i++)
+            {
+                images[i].Release(ownsSliceMemory: true);
+            }
+        }
+
+        private static astcenc_image[] SnapshotTextureMipmaps(Texture2D inputTexture, int mipCount)
+        {
+            int width = inputTexture.width;
+            int height = inputTexture.height;
+            switch (inputTexture.graphicsFormat)
+            {
+                case GraphicsFormat.R8_UNorm:
+                case GraphicsFormat.R8_SRGB:
+                    return SnapshotRawData(inputTexture.GetRawTextureData<R8>(), width, height, 8, mipCount, false);
+                case GraphicsFormat.R8G8_UNorm:
+                case GraphicsFormat.R8G8_SRGB:
+                    return SnapshotRawData(inputTexture.GetRawTextureData<RG8>(), width, height, 8, mipCount, false);
+                case GraphicsFormat.R8G8B8_UNorm:
+                case GraphicsFormat.R8G8B8_SRGB:
+                case GraphicsFormat.B8G8R8_UNorm:
+                case GraphicsFormat.B8G8R8_SRGB:
+                    return SnapshotRawData(inputTexture.GetRawTextureData<RGB8>(), width, height, 8, mipCount, false);
+                case GraphicsFormat.R8G8B8A8_UNorm:
+                case GraphicsFormat.R8G8B8A8_SRGB:
+                case GraphicsFormat.B8G8R8A8_UNorm:
+                case GraphicsFormat.B8G8R8A8_SRGB:
+                    return SnapshotRawData(inputTexture.GetRawTextureData<RGBA8>(), width, height, 8, mipCount, true);
+                case GraphicsFormat.R16_UNorm:
+                    return SnapshotRawData(inputTexture.GetRawTextureData<R16>(), width, height, 16, mipCount, false);
+                case GraphicsFormat.R16G16_UNorm:
+                    return SnapshotRawData(inputTexture.GetRawTextureData<RG16>(), width, height, 16, mipCount, false);
+                case GraphicsFormat.R16G16B16_UNorm:
+                    return SnapshotRawData(inputTexture.GetRawTextureData<RGB16>(), width, height, 16, mipCount, false);
+                case GraphicsFormat.R16G16B16A16_UNorm:
+                    return SnapshotRawData(inputTexture.GetRawTextureData<RGBA16>(), width, height, 16, mipCount, false);
+                case GraphicsFormat.R16_SFloat:
+                    return SnapshotRawData(inputTexture.GetRawTextureData<R16F>(), width, height, 16, mipCount, false);
+                case GraphicsFormat.R16G16_SFloat:
+                    return SnapshotRawData(inputTexture.GetRawTextureData<RG16F>(), width, height, 16, mipCount, false);
+                case GraphicsFormat.R16G16B16_SFloat:
+                    return SnapshotRawData(inputTexture.GetRawTextureData<RGB16F>(), width, height, 16, mipCount, false);
+                case GraphicsFormat.R16G16B16A16_SFloat:
+                    return SnapshotRawData(inputTexture.GetRawTextureData<RGBA16F>(), width, height, 16, mipCount, true);
+                case GraphicsFormat.R32_SFloat:
+                    return SnapshotRawData(inputTexture.GetRawTextureData<R32F>(), width, height, 32, mipCount, false);
+                case GraphicsFormat.R32G32_SFloat:
+                    return SnapshotRawData(inputTexture.GetRawTextureData<RG32F>(), width, height, 32, mipCount, false);
+                case GraphicsFormat.R32G32B32_SFloat:
+                    return SnapshotRawData(inputTexture.GetRawTextureData<RGB32F>(), width, height, 32, mipCount, false);
+                case GraphicsFormat.R32G32B32A32_SFloat:
+                    return SnapshotRawData(inputTexture.GetRawTextureData<RGBA32F>(), width, height, 32, mipCount, true);
+                default:
+                    return null;
+            }
+        }
+
+        private static AstcRaw CompressSnapshots(AstcContext context, astcenc_swizzle swizzle, astcenc_image[] mipmaps)
+        {
+            uint blockX = context.BlockX;
+            uint blockY = context.BlockY;
+
+            int total = 0;
+            for (int i = 0; i < mipmaps.Length; i++)
+            {
+                total += CalculateMipByteLength((int)mipmaps[i].dim_x, (int)mipmaps[i].dim_y, blockX, blockY);
+            }
+
+            IntPtr output = Marshal.AllocHGlobal(total);
+            int byteWrited = 0;
+            try
+            {
+                for (int i = 0; i < mipmaps.Length; i++)
+                {
+                    int length = CalculateMipByteLength((int)mipmaps[i].dim_x, (int)mipmaps[i].dim_y, blockX, blockY);
+                    astcenc_error status = context.CompressSingleImage(ref mipmaps[i], ref swizzle, output + byteWrited, length);
+                    if (status != astcenc_error.ASTCENC_SUCCESS)
+                    {
+                        throw new Exception(status.ToString());
+                    }
+                    byteWrited += length;
+                }
+
+                return new AstcRaw(output, total);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError("ASTC async compress failed: " + ex.Message);
+                Marshal.FreeHGlobal(output);
+                return null;
+            }
+        }
+
+        private static bool CompressImage(Texture2D inputTexture, AstcContext context, astcenc_swizzle swizzle, int mipCount, out IntPtr output, out int size)
+        {
+            int width = inputTexture.width;
+            int height = inputTexture.height;
             switch (inputTexture.graphicsFormat)
             {
                 case GraphicsFormat.R8_UNorm:
                 case GraphicsFormat.R8_SRGB:
                     {
                         NativeArray<R8> raw = inputTexture.GetRawTextureData<R8>();
-                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 8, inputTexture.mipmapCount, blockX, blockY, false, out output, out size);
+                        return CompressRawData(context, swizzle, raw, width, height, 8, mipCount, false, out output, out size);
                     }
                 case GraphicsFormat.R8G8_UNorm:
                 case GraphicsFormat.R8G8_SRGB:
                     {
                         NativeArray<RG8> raw = inputTexture.GetRawTextureData<RG8>();
-                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 8, inputTexture.mipmapCount, blockX, blockY, false, out output, out size);
+                        return CompressRawData(context, swizzle, raw, width, height, 8, mipCount, false, out output, out size);
                     }
                 case GraphicsFormat.R8G8B8_UNorm:
                 case GraphicsFormat.R8G8B8_SRGB:
@@ -437,7 +575,7 @@ namespace Aperture.Astcenc.Runtime
                 case GraphicsFormat.B8G8R8_SRGB:
                     {
                         NativeArray<RGB8> raw = inputTexture.GetRawTextureData<RGB8>();
-                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 8, inputTexture.mipmapCount, blockX, blockY, false, out output, out size);
+                        return CompressRawData(context, swizzle, raw, width, height, 8, mipCount, false, out output, out size);
                     }
                 case GraphicsFormat.R8G8B8A8_UNorm:
                 case GraphicsFormat.R8G8B8A8_SRGB:
@@ -445,67 +583,67 @@ namespace Aperture.Astcenc.Runtime
                 case GraphicsFormat.B8G8R8A8_SRGB:
                     {
                         NativeArray<RGBA8> raw = inputTexture.GetRawTextureData<RGBA8>();
-                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 8, inputTexture.mipmapCount, blockX, blockY, true, out output, out size);
+                        return CompressRawData(context, swizzle, raw, width, height, 8, mipCount, true, out output, out size);
                     }
                 case GraphicsFormat.R16_UNorm:
                     {
                         NativeArray<R16> raw = inputTexture.GetRawTextureData<R16>();
-                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 16, inputTexture.mipmapCount, blockX, blockY, false, out output, out size);
+                        return CompressRawData(context, swizzle, raw, width, height, 16, mipCount, false, out output, out size);
                     }
                 case GraphicsFormat.R16G16_UNorm:
                     {
                         NativeArray<RG16> raw = inputTexture.GetRawTextureData<RG16>();
-                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 16, inputTexture.mipmapCount, blockX, blockY, false, out output, out size);
+                        return CompressRawData(context, swizzle, raw, width, height, 16, mipCount, false, out output, out size);
                     }
                 case GraphicsFormat.R16G16B16_UNorm:
                     {
                         NativeArray<RGB16> raw = inputTexture.GetRawTextureData<RGB16>();
-                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 16, inputTexture.mipmapCount, blockX, blockY, false, out output, out size);
+                        return CompressRawData(context, swizzle, raw, width, height, 16, mipCount, false, out output, out size);
                     }
                 case GraphicsFormat.R16G16B16A16_UNorm:
                     {
                         NativeArray<RGBA16> raw = inputTexture.GetRawTextureData<RGBA16>();
-                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 16, inputTexture.mipmapCount, blockX, blockY, false, out output, out size);
+                        return CompressRawData(context, swizzle, raw, width, height, 16, mipCount, false, out output, out size);
                     }
                 case GraphicsFormat.R16_SFloat:
                     {
                         NativeArray<R16F> raw = inputTexture.GetRawTextureData<R16F>();
-                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 16, inputTexture.mipmapCount, blockX, blockY, false, out output, out size);
+                        return CompressRawData(context, swizzle, raw, width, height, 16, mipCount, false, out output, out size);
                     }
                 case GraphicsFormat.R16G16_SFloat:
                     {
                         NativeArray<RG16F> raw = inputTexture.GetRawTextureData<RG16F>();
-                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 16, inputTexture.mipmapCount, blockX, blockY, false, out output, out size);
+                        return CompressRawData(context, swizzle, raw, width, height, 16, mipCount, false, out output, out size);
                     }
                 case GraphicsFormat.R16G16B16_SFloat:
                     {
                         NativeArray<RGB16F> raw = inputTexture.GetRawTextureData<RGB16F>();
-                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 16, inputTexture.mipmapCount, blockX, blockY, false, out output, out size);
+                        return CompressRawData(context, swizzle, raw, width, height, 16, mipCount, false, out output, out size);
                     }
                 case GraphicsFormat.R16G16B16A16_SFloat:
                     {
                         NativeArray<RGBA16F> raw = inputTexture.GetRawTextureData<RGBA16F>();
-                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 16, inputTexture.mipmapCount, blockX, blockY, true, out output, out size);
+                        return CompressRawData(context, swizzle, raw, width, height, 16, mipCount, true, out output, out size);
                     }
                 case GraphicsFormat.R32_SFloat:
                     {
                         NativeArray<R32F> raw = inputTexture.GetRawTextureData<R32F>();
-                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 32, inputTexture.mipmapCount, blockX, blockY, false, out output, out size);
+                        return CompressRawData(context, swizzle, raw, width, height, 32, mipCount, false, out output, out size);
                     }
                 case GraphicsFormat.R32G32_SFloat:
                     {
                         NativeArray<RG32F> raw = inputTexture.GetRawTextureData<RG32F>();
-                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 32, inputTexture.mipmapCount, blockX, blockY, false, out output, out size);
+                        return CompressRawData(context, swizzle, raw, width, height, 32, mipCount, false, out output, out size);
                     }
                 case GraphicsFormat.R32G32B32_SFloat:
                     {
                         NativeArray<RGB32F> raw = inputTexture.GetRawTextureData<RGB32F>();
-                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 32, inputTexture.mipmapCount, blockX, blockY, false, out output, out size);
+                        return CompressRawData(context, swizzle, raw, width, height, 32, mipCount, false, out output, out size);
                     }
                 case GraphicsFormat.R32G32B32A32_SFloat:
                     {
                         NativeArray<RGBA32F> raw = inputTexture.GetRawTextureData<RGBA32F>();
-                        return CompressRawData(context, swizzle, raw, inputTexture.width, inputTexture.height, 32, inputTexture.mipmapCount, blockX, blockY, true, out output, out size);
+                        return CompressRawData(context, swizzle, raw, width, height, 32, mipCount, true, out output, out size);
                     }
             }
 
@@ -515,17 +653,7 @@ namespace Aperture.Astcenc.Runtime
             return false;
         }
 
-        /// <summary>
-        /// Compress the inputTexture and return the compressed data by AstcRaw, you should call Dispose() for the AstcRaw after use.
-        /// </summary>
-        /// <param name="inputTexture">inputTexture</param>
-        /// <param name="output">output unmanaged data IntPtr</param>
-        /// <param name="size">out put data size</param>
-        /// <param name="textureType">Indicate that compress for color texture or notmal texture</param>
-        /// <param name="blockSize">Astc compress ratio</param>
-        /// <param name="quality">Compress quality setting</param>
-        /// <returns>CompressedData</returns>
-        public static AstcRaw CompressTexture(this Texture2D inputTexture, TextureType textureType, BlockSize blockSize, CompressQuality quality)
+        internal static AstcRaw CompressTextureWithContext(Texture2D inputTexture, AstcContext context, TextureType textureType, bool includeMipmaps)
         {
             if (!IsSupport(inputTexture))
             {
@@ -533,40 +661,24 @@ namespace Aperture.Astcenc.Runtime
                 return null;
             }
 
-            uint threadCount = 1;
-            if (!GetBlockSize(blockSize, out uint blockX, out uint blockY, out uint blockZ))
+            if (context == null)
             {
-                Debug.LogError("Unsupported ASTC block size: " + blockSize);
+                Debug.LogError("AstcContext is null.");
                 return null;
             }
 
-            float qualityValue = GetQualityValue(quality);
+            context.ThrowIfDisposed();
 
-            astcenc_profile profile = GetColorProfile(inputTexture.graphicsFormat);
+            if (!context.IsCompatibleWith(inputTexture.graphicsFormat, textureType))
+            {
+                Debug.LogError("AstcContext profile or flags do not match the input texture format and type.");
+                return null;
+            }
+
             astcenc_swizzle swizzle = GetSwizzle(inputTexture.graphicsFormat, textureType);
+            int mipCount = includeMipmaps ? inputTexture.mipmapCount : 1;
 
-            uint flags = (uint)GetFlags(textureType, inputTexture.graphicsFormat);
-
-            astcenc_config config = new astcenc_config();
-            astcenc_error status = astcenc_api.astcenc_config_init(profile, blockX, blockY, blockZ, qualityValue, flags, ref config);
-            if (status != astcenc_error.ASTCENC_SUCCESS)
-            {
-                Debug.LogError("Codec config init failed:" + status);
-                return null;
-            }
-
-            IntPtr context = IntPtr.Zero;
-            status = astcenc_api.astcenc_context_alloc(ref config, threadCount, ref context);
-            if (status != astcenc_error.ASTCENC_SUCCESS)
-            {
-                Debug.LogError("Codec context alloc failed:" + status);
-                return null;
-            }
-
-            bool success = CompressImage(inputTexture, context, swizzle, blockX, blockY, out IntPtr output, out int size);
-
-            astcenc_api.astcenc_context_free(context);
-
+            bool success = CompressImage(inputTexture, context, swizzle, mipCount, out IntPtr output, out int size);
             if (!success || output == IntPtr.Zero || size <= 0)
             {
                 if (output != IntPtr.Zero)
@@ -577,6 +689,121 @@ namespace Aperture.Astcenc.Runtime
             }
 
             return new AstcRaw(output, size);
+        }
+
+        internal static Task<AstcRaw> CompressTextureWithContextAsync(Texture2D inputTexture, AstcContext context, TextureType textureType, bool includeMipmaps, bool disposeContextOnComplete)
+        {
+            if (!IsSupport(inputTexture))
+            {
+                Debug.LogError("Texture format is not support or read/write is disabled.");
+                if (disposeContextOnComplete) context?.Dispose();
+                return Task.FromResult<AstcRaw>(null);
+            }
+
+            if (context == null)
+            {
+                Debug.LogError("AstcContext is null.");
+                return Task.FromResult<AstcRaw>(null);
+            }
+
+            context.ThrowIfDisposed();
+
+            if (!context.IsCompatibleWith(inputTexture.graphicsFormat, textureType))
+            {
+                Debug.LogError("AstcContext profile or flags do not match the input texture format and type.");
+                if (disposeContextOnComplete) context.Dispose();
+                return Task.FromResult<AstcRaw>(null);
+            }
+
+            astcenc_swizzle swizzle = GetSwizzle(inputTexture.graphicsFormat, textureType);
+            int mipCount = includeMipmaps ? inputTexture.mipmapCount : 1;
+
+            astcenc_image[] snapshots;
+            try
+            {
+                snapshots = SnapshotTextureMipmaps(inputTexture, mipCount);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError("Failed to snapshot texture mipmaps for async compression: " + ex.Message);
+                if (disposeContextOnComplete) context.Dispose();
+                return Task.FromResult<AstcRaw>(null);
+            }
+
+            if (snapshots == null)
+            {
+                if (disposeContextOnComplete) context.Dispose();
+                return Task.FromResult<AstcRaw>(null);
+            }
+
+            return Task.Run(() =>
+            {
+                try
+                {
+                    return CompressSnapshots(context, swizzle, snapshots);
+                }
+                finally
+                {
+                    ReleaseSnapshots(snapshots);
+                    if (disposeContextOnComplete)
+                    {
+                        context.Dispose();
+                    }
+                }
+            });
+        }
+
+        /// <summary>
+        /// Compress the inputTexture and return the compressed data by AstcRaw, you should call Dispose() for the AstcRaw after use.
+        /// </summary>
+        /// <param name="inputTexture">Input texture must be uncompressed format and readable</param>
+        /// <param name="textureType">Indicate that compress for color texture or normal texture</param>
+        /// <param name="blockSize">Astc compress ratio</param>
+        /// <param name="quality">Compress quality setting</param>
+        /// <param name="threadCount">Worker thread count (1 = single-threaded, &lt;= 0 = auto)</param>
+        /// <returns>CompressedData</returns>
+        public static AstcRaw CompressTexture(this Texture2D inputTexture, TextureType textureType, BlockSize blockSize, CompressQuality quality, int threadCount = 1)
+        {
+            if (!IsSupport(inputTexture))
+            {
+                Debug.LogError("Texture format is not support or read/write is disabled.");
+                return null;
+            }
+
+            using AstcContext context = AstcContext.Create(inputTexture.graphicsFormat, textureType, blockSize, quality, threadCount);
+            if (context == null)
+            {
+                return null;
+            }
+
+            return CompressTextureWithContext(inputTexture, context, textureType, true);
+        }
+
+        /// <summary>
+        /// Captures pixel data on the calling (main) thread and compresses asynchronously on background thread(s).
+        /// You should call Dispose() on the returned AstcRaw after use.
+        /// </summary>
+        /// <param name="inputTexture">Input texture must be uncompressed format and readable</param>
+        /// <param name="textureType">Indicate that compress for color texture or normal texture</param>
+        /// <param name="blockSize">Astc compress ratio</param>
+        /// <param name="quality">Compress quality setting</param>
+        /// <param name="threadCount">Worker thread count (&lt;= 0 = auto based on CPU cores)</param>
+        /// <returns>Task yielding compressed AstcRaw data or null on failure</returns>
+        public static Task<AstcRaw> CompressTextureAsync(this Texture2D inputTexture, TextureType textureType = TextureType.Default, BlockSize blockSize = BlockSize.ASTC_6x6, CompressQuality quality = CompressQuality.Fast, int threadCount = 0)
+        {
+            if (!IsSupport(inputTexture))
+            {
+                Debug.LogError("Texture format is not support or read/write is disabled.");
+                return Task.FromResult<AstcRaw>(null);
+            }
+
+            AstcContext context = AstcContext.Create(inputTexture.graphicsFormat, textureType, blockSize, quality, threadCount);
+            if (context == null)
+            {
+                return Task.FromResult<AstcRaw>(null);
+            }
+
+            return CompressTextureWithContextAsync(inputTexture, context, textureType, true, disposeContextOnComplete: true);
         }
 
         /// <summary>
@@ -597,15 +824,16 @@ namespace Aperture.Astcenc.Runtime
         /// <summary>
         /// Compress texture at runtime to ASTC formats.
         /// </summary>
-        /// <param name="inputTexutre">Input texture must be uncompressed format and readable</param>
-        /// <param name="textureType">Indicate that compress for color texture or notmal texture</param>
+        /// <param name="inputTexture">Input texture must be uncompressed format and readable</param>
+        /// <param name="textureType">Indicate that compress for color texture or normal texture</param>
         /// <param name="blockSize">Astc compress ratio</param>
         /// <param name="quality">Compress quality setting</param>
         /// <param name="makeNoLongerReadable">When set to true, Unity discards the copy of pixel data in CPU-addressable memory after this operation.</param>
+        /// <param name="threadCount">Worker thread count (1 = single-threaded, &lt;= 0 = auto)</param>
         /// <returns>Success or not</returns>
-        public static bool Compress(this Texture2D inputTexture, TextureType textureType = TextureType.Default, BlockSize blockSize = BlockSize.ASTC_6x6, CompressQuality quality = CompressQuality.Fast, bool makeNoLongerReadable = true)
+        public static bool Compress(this Texture2D inputTexture, TextureType textureType = TextureType.Default, BlockSize blockSize = BlockSize.ASTC_6x6, CompressQuality quality = CompressQuality.Fast, bool makeNoLongerReadable = true, int threadCount = 1)
         {
-            using AstcRaw raw = inputTexture.CompressTexture(textureType, blockSize, quality);
+            using AstcRaw raw = inputTexture.CompressTexture(textureType, blockSize, quality, threadCount);
 
             if (raw != null)
             {
