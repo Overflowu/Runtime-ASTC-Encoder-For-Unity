@@ -9,25 +9,25 @@ A **runtime ASTC texture compression library** for Unity (Unity Package: `com.ap
 ## Key Features
 
 - **Unified Dual-Backend Switching (CPU / GPU / Auto)**:
-  - **CPU Backend (`EncodeBackend.Cpu`)**: Powered by ARM `astc-encoder v5.7.1`, offering offline-grade compression quality (`Fastest` ~ `Exhaustive`) with no Compute Shader requirement.
-  - **GPU Backend (`EncodeBackend.Gpu`)**: Custom cross-platform tableless HLSL Compute Shader encoder (Metal / Vulkan / OpenGL ES 3.1+ / D3D11 / D3D12) supporting **all 6 block sizes (`4x4` ~ `12x12`) and LDR / sRGB / Normal / HDR (`CEM 11/14/15`)**, accepting **`RenderTexture` and non-readable `Texture2D`**, with a **zero-CPU-readback `CommandBuffer.CopyTexture`** fast path for block-aligned dimensions as well as `AsyncGPUReadback` raw-byte export.
-  - **Auto Backend (`EncodeBackend.Auto`, default across all APIs)**: Automatically prefers GPU when supported by the device and input texture, seamlessly falling back to CPU otherwise.
+  - **CPU Backend (`EncodeBackend.Cpu`)**: Powered by ARM `astc-encoder v5.7.1`, offering offline-grade compression quality (`Fastest` ~ `Exhaustive`), CPU software decompression (`Decompress` / `DecompressAstcFile`), and `parentContext` lookup-table sharing with no Compute Shader requirement.
+  - **GPU Backend (`EncodeBackend.Gpu`)**: Custom cross-platform tableless HLSL Compute Shader encoder (Metal / Vulkan / OpenGL ES 3.1+ / D3D11 / D3D12) supporting **all 6 block sizes (`4x4` ~ `12x12`) and LDR / sRGB / Normal / HDR (`CEM 11/14/15`)**, accepting **`RenderTexture` and non-readable `Texture2D`**, with a **zero-CPU-readback `CommandBuffer.CopyTexture`** fast path for block-aligned dimensions as well as non-blocking `AsyncGPUReadback` paths (`CompressToTextureAsync` / `CompressTextureAsync`).
+  - **Auto Backend (`EncodeBackend.Auto`, default across all APIs)**: Automatically prefers GPU when supported by the device and input texture, seamlessly falling back to CPU on unsupported platforms or runtime GPU failures.
 - **Flexible Workflows**:
   - In-place compression and GPU upload (`Texture2D.Compress`)
-  - One-shot creation of a new compressed texture (`Texture.CompressToTexture`, supporting `RenderTexture` and zero-readback copy)
+  - One-shot sync / async creation of a new compressed texture (`Texture.CompressToTexture` / `CompressToTextureAsync`, supporting `RenderTexture`, zero-readback copy, and `AsyncGPUReadback`)
   - Low-level `CommandBuffer` recording (`Encoder.Encode`, ideal for batching, Async Compute, and dynamic atlas / Virtual Texture sub-region updates)
   - Synchronous / asynchronous raw unmanaged ASTC buffer output (`CompressTexture` / `CompressTextureAsync` → `AstcRaw`)
-  - Reusable CPU codec context for batch compression (`AstcContext`)
-  - Synchronous / asynchronous standard `.astc` file byte export (`EncodeToASTC` / `EncodeToASTCAsync`, mip 0 only)
+  - Unified `AstcCompressOptions` struct overloads (`Default`, `NormalMap`, `Transparent` presets) and reusable `AstcContext` (with `astcenc 5.x` `parentContext` sharing)
+  - Synchronous / asynchronous standard `.astc` file byte export (`EncodeToASTC` / `EncodeToASTCAsync`, mip 0 only) and CPU software decompression (`Decompress` / `DecompressToTexture` / `DecompressAstcFile`)
 - **High Performance & Low GC**:
-  - **GPU Backend**: Pure-integer ALU BISE encoding & quantization (zero large constant lookup tables, avoiding Android HLSLcc / mobile GPU register spilling), lossless Void-Extent constant-block fast path, dedicated `CEM 4` + Dual-Plane Normal map encoding, RGBA Dual-Plane and High-tier 2-Partition search, `CommandBuffer`-managed temporary RTs (safe for deferred execution), and `PreloadGpu` / `ReleaseGpuCache` helpers.
-  - **CPU Backend**: **Zero-copy direct pointer binding** (`NativeSlice`) for 4-channel `RGBA8` / `RGBA16F` / `RGBA32F` formats (native `MemCpy` snapshot in async mode), zero-allocation conversion for other formats, multi-core parallelism, and `CancellationToken` support.
+  - **GPU Backend**: Dedicated lightweight `ASTC_FAST_ONLY` kernels (minimal VGPR pressure for `Fastest`/`Fast`), pure-integer ALU BISE encoding (zero large constant tables), lossless Void-Extent fast path, dedicated `CEM 4` + angular-error Dual-Plane Normal encoding, dynamic-CCS Dual-Plane for both RGB (ORM/MRAO) and RGBA, anisotropic weight grids (`6x4`/`4x6`/`8x4`/`4x8`), HDR CEM 11 high-precision delta modes, post-quantization ideal endpoint refit, High-tier 2-Partition search, LOH-free `AsyncGPUReadback` sync readback, and `PreloadGpu` (warms both Fast & Full Tex/Buf kernels) / `ReleaseGpuCache`.
+  - **CPU Backend**: **Zero-copy direct pointer binding** (`NativeSlice`) for 4-channel `RGBA8` / `RGBA16F` / `RGBA32F` formats, **compact main-thread `MemCpy` snapshot with lazy per-mip worker-thread expansion** in async mode (up to 8× lower peak memory), direct `unsafe` pointer pixel expansion with zero heap allocations, multi-core parallelism, and `CancellationToken` support.
 - **Broad Input Format & Full Mipmap Support**:
   - Supports 24 uncompressed `GraphicsFormat`s (GPU backend also supports 2D `RenderTexture` formats such as `B10G11R11_UFloatPack32`), covering **LDR (8-bit UNorm / sRGB, 16-bit UNorm)** and **HDR (16-bit / 32-bit Float)**.
   - Full per-level mipmap chain compression (including non-square and non-power-of-two textures).
 - **Automatic Texture Type & Channel Handling**:
-  - Color textures (`TextureType.Default`): Automatic `BGRA` channel swizzling and sRGB color space handling; optional `useAlphaWeight` alpha-weighted RGB error optimization (off by default to preserve ORM / channel-packed mask maps).
-  - Normal maps (`TextureType.Normal`): `GGGR` channel swizzling (CPU enables `MapNormal`; GPU uses dedicated `CEM_LDR_LUM_ALPHA_DIRECT` + Dual-Plane independent weight planes and always outputs linear UNorm ASTC regardless of whether the source view is sRGB).
+  - Color textures (`TextureType.Default`): Automatic `BGRA` channel swizzling and sRGB color space handling; optional `useAlphaWeight` alpha-weighted RGB error optimization (off by default to preserve ORM / channel-packed mask maps, keeping Alpha at full weight).
+  - Normal maps (`TextureType.Normal`): `GGGR` channel swizzling (CPU enables `MapNormal`; GPU uses dedicated `CEM_LDR_LUM_ALPHA_DIRECT` + Dual-Plane with tangent-space angular error and always outputs linear UNorm ASTC regardless of whether the source is sRGB or float).
 
 ---
 
@@ -234,24 +234,29 @@ All public APIs reside in the `Aperture.Astcenc.Runtime` namespace.
 | :--- | :--- |
 | `Encoder.IsGpuSupported` | Checks whether the current device supports Compute Shaders and `R32G32B32A32_UInt` UAV writes |
 | `Encoder.SupportsGpuDirectCopy(blockSize, srgb, isHdr)` | Checks whether the GPU supports zero-readback `CopyTexture` into the target ASTC format |
-| `Encoder.PreloadGpu(blockSize)` / `Encoder.ReleaseGpuCache()` | Warms up the GPU Compute Shader (avoids first-frame compilation hitch) / releases cached Compute Shader references (temporary RTs are pooled per call with no persistent VRAM) |
+| `Encoder.GetTargetAstcFormat(sourceFormat, blockSize, textureType)` | Resolves the target ASTC `GraphicsFormat` for a given source format and texture type (Normal maps always resolve to linear UNorm) |
+| `Encoder.PreloadGpu(blockSize)` / `Encoder.ReleaseGpuCache()` | Warms up both Fast and Full GPU Compute Shader kernels (Texture & Buffer outputs) / releases cached Compute Shader references |
 | `Encoder.IsSupport(Texture texture, EncodeBackend backend = EncodeBackend.Auto)` | Checks whether the texture is supported by the given backend (default `Auto`; GPU requires no `isReadable` and supports non-MSAA `RenderTexture`) |
-| `Texture.CompressToTexture(..., backend = EncodeBackend.Auto)` | Compresses any 2D `Texture` / `RenderTexture` into a newly allocated ASTC `Texture2D` (prefers zero-readback copy on GPU) |
-| `Encoder.Encode(CommandBuffer cmd, source, destination, ...)` | Records GPU ASTC encoding and `CopyTexture` into a `CommandBuffer` (`destX`/`destY` are block-aligned destination texel coordinates; supports sub-regions and custom mips) |
+| `Texture.CompressToTexture(..., backend = EncodeBackend.Auto)` / `Texture.CompressToTextureAsync(...)` | Compresses any 2D `Texture` / `RenderTexture` into a newly allocated ASTC `Texture2D` (zero-readback CopyTexture when aligned; non-blocking `AsyncGPUReadback` or CPU worker threads for async) |
+| `Encoder.Encode(CommandBuffer cmd, source, destination, ...)` | Records GPU ASTC encoding and `CopyTexture` into a `CommandBuffer` (`destX`/`destY` are block-aligned destination texel coordinates; validates exact destination ASTC format match) |
 | `Texture2D.Compress(..., backend = EncodeBackend.Auto)` | Compresses a `Texture2D` in-place (default `Auto`; requires `isReadable == true` and a full mipmap chain due to `Reinitialize`; uses zero-readback fast path when aligned and `makeNoLongerReadable == true`; use `CompressToTexture` for non-readable textures) |
 | `Texture2D.CompressTexture(..., backend = EncodeBackend.Auto)` / `RenderTexture.CompressTexture(...)` | Synchronously compresses all mipmaps into unmanaged memory and returns `AstcRaw` (must call `Dispose()`) |
 | `Texture2D.CompressTextureAsync(..., backend = EncodeBackend.Auto)` / `RenderTexture.CompressTextureAsync(...)` | Asynchronously compresses via GPU `AsyncGPUReadback` or CPU worker threads (default `Auto`), with `CancellationToken` support |
 | `Texture2D.LoadRawTextureData(AstcRaw raw)` | Loads compressed bytes from `AstcRaw` directly into a target `Texture2D` |
-| `Texture2D.EncodeToASTC(..., backend = EncodeBackend.Auto)` / `Texture.EncodeToASTCAsync(..., backend = EncodeBackend.Auto)` | Encodes mip 0 only with the 16-byte `.astc` file header and returns a managed `byte[]` (works on GPU even on desktop GPUs without hardware ASTC sampling) |
+| `Texture.EncodeToASTC(..., backend = EncodeBackend.Auto)` / `Texture.EncodeToASTCAsync(..., backend = EncodeBackend.Auto)` | Encodes mip 0 only (supports both `Texture2D` and `RenderTexture`) with the 16-byte `.astc` file header and returns a managed `byte[]` |
+| `Encoder.Decompress(...)` / `Encoder.DecompressToTexture(...)` / `Encoder.DecompressAstcFile(...)` | Software-decompresses raw ASTC blocks or `.astc` file bytes via native CPU `astc-encoder` into RGBA bytes or an uncompressed `Texture2D` |
+
+> All compression entry points also provide clean `AstcCompressOptions` struct overloads (with `Default`, `NormalMap`, and `Transparent` presets) exposing advanced CPU options such as `UsePerceptual` and `AlphaScaleRadius`.
 
 ### `AstcContext` (Reusable Native CPU Codec Context)
 
 | Member | Description |
 | :--- | :--- |
-| `AstcContext.Create(graphicsFormat, textureType, blockSize, quality, threadCount, useAlphaWeight)` | Creates a reusable context (`threadCount <= 0` auto-selects worker threads; sets `a_scale_radius = 1` when `useAlphaWeight` is enabled) |
+| `AstcContext.Create(graphicsFormat, textureType, blockSize, quality, threadCount, useAlphaWeight, usePerceptual, alphaScaleRadius, parentContext)` | Creates a reusable compression context (`threadCount <= 0` auto-selects worker threads; optional `parentContext` shares read-only lookup tables in `astcenc 5.x`) |
+| `AstcContext.CreateDecompressor(blockSize, srgb, isHdr, threadCount)` | Creates a lightweight `DecompressOnly` context for CPU software decompression |
 | `context.CompressTexture(texture, textureType)` | Synchronously compresses a texture reusing this context |
-| `context.CompressTextureAsync(texture, textureType, cancellationToken)` | Asynchronously compresses a texture reusing this context (keep the context alive until the returned task completes) |
-| `context.Dispose()` | Frees the underlying native `astcenc_context` |
+| `context.CompressTextureAsync(texture, textureType, cancellationToken)` | Asynchronously compresses a texture reusing this context (compact main-thread memcpy + worker-thread mip expansion) |
+| `context.Dispose()` | Thread-safely frees the underlying native `astcenc_context` |
 
 ### `AstcRaw` (Unmanaged Compressed Buffer Wrapper)
 
@@ -262,13 +267,14 @@ All public APIs reside in the `Aperture.Astcenc.Runtime` namespace.
 
 ### Enums & Configuration
 
-- **`EncodeBackend`**: `Cpu` (native `astc-encoder`), `Gpu` (Compute Shader real-time encoder), `Auto` (prefers GPU, falls back to CPU)
-- **`TextureType`**: `Default` (color texture), `Normal` (normal map)
+- **`AstcCompressOptions`**: Unified configuration struct (`Default`, `NormalMap`, `Transparent` presets) for basic and advanced encoder settings
+- **`EncodeBackend`**: `Cpu` (native `astc-encoder`), `Gpu` (Compute Shader real-time encoder), `Auto` (prefers GPU with automatic CPU fallback)
+- **`TextureType`**: `Default` (color texture), `Normal` (normal map — always linear UNorm even for sRGB or float inputs)
 - **`BlockSize`** (all 6 supported on both CPU and GPU, 16 bytes per block):
   - `ASTC_4x4` (8.00 bpp) / `ASTC_5x5` (5.12 bpp) / `ASTC_6x6` (3.56 bpp) / `ASTC_8x8` (2.00 bpp) / `ASTC_10x10` (1.28 bpp) / `ASTC_12x12` (0.89 bpp)
 - **`CompressQuality`**:
   - CPU backend maps to `astcenc` effort levels: `Fastest` (`0`) / `Fast` (`10`) / `Medium` (`60`) / `Thorough` (`98`) / `VeryThorough` (`99`) / `Exhaustive` (`100`)
-  - GPU backend maps to 3 tiers: `Fastest`/`Fast` → single optimal block mode; `Medium` → least-squares endpoint refinement + multi-BlockMode selection + RGBA Dual-Plane; `Thorough`~`Exhaustive` → adds 16-seed directional 2-Partition search
+  - GPU backend maps to 3 tiers: `Fastest`/`Fast` → dedicated lightweight `ASTC_FAST_ONLY` kernel (minimal VGPR pressure); `Medium` → least-squares endpoint refinement + isotropic & anisotropic (`6x4`/`4x6`/`8x4`/`4x8`) multi-BlockMode selection + dynamic-CCS Dual-Plane (RGB & RGBA) + normal angular error + post-quantization ideal endpoint refit + HDR CEM 11 high-precision delta modes; `Thorough`~`Exhaustive` → adds 16-seed directional 2-Partition search
 - **`CodecFlags`**: Maps to `astcenc 5.7.1` flags (`MapNormal`, `UseDecodeUnorm8`, `UseAlphaWeight`, `UsePerceptual`, `DecompressOnly`, `SelfDecompressOnly`, `MapRGBM`)
 
 ### Supported Input Formats & Target ASTC Mapping
@@ -301,12 +307,13 @@ flowchart TD
 
 ### Implementation Highlights
 
-1. **Context Management (`AstcContext`)**: Creates a native context via `astcenc_config_init` + `astcenc_context_alloc(..., parent_context: IntPtr.Zero)` with `SelfDecompressOnly`; supports multi-core parallel compression (`Parallel.For` assigning unique `thread_index`, falling back to single-threaded for small mip levels to avoid scheduling overhead), `CancellationToken` cancellation (`astcenc_compress_cancel`), and guaranteed `astcenc_compress_reset` in `finally`.
+1. **Context Management (`AstcContext`)**: Creates a native context via `astcenc_config_init` + `astcenc_context_alloc` with `SelfDecompressOnly` (or `DecompressOnly` via `CreateDecompressor`) and optional `parentContext` read-only table sharing (`astcenc 5.x`); supports multi-core parallel compression (`Parallel.For` assigning unique `thread_index`, falling back to single-threaded for small mip levels), `CancellationToken` cancellation (`astcenc_compress_cancel`), and guaranteed `astcenc_compress_reset` in `finally`.
 2. **Pre-Allocated Output Buffer**: Sums `ceil(max(1, w >> i) / blockX) * ceil(max(1, h >> i) / blockY) * 16` bytes across all mip levels and allocates a single contiguous unmanaged buffer up front.
 3. **Pixel Transfer Optimizations**:
-   - `RGBA8` / `RGBA16F` / `RGBA32F` (including `BGRA8`, handled by native `swizzle`) already match `astcenc_image` layout: synchronous mode passes the `NativeSlice` read-only pointer directly (zero-copy); async mode uses bulk `UnsafeUtility.MemCpy`.
-   - 1/2/3-channel and 16-bit UNorm formats expand into 4-channel buffers via `IRawData` pointer loops with zero heap allocations (missing RGB filled with `0`, missing Alpha with `1.0` / `0xFF`; 16-bit UNorm outputs `F32` to preserve full precision).
-4. **`.astc` Export**: `EncodeToASTC` encodes mip 0 only and writes the 16-byte little-endian header directly via `AstcHeader.WriteTo` (magic `0x5CA1AB13` + 3-byte block dimensions + 3 × 3-byte 24-bit image dimensions), avoiding extra unmanaged allocations.
+   - `RGBA8` / `RGBA16F` / `RGBA32F` (including `BGRA8`, handled by native `swizzle`) already match `astcenc_image` layout: synchronous mode passes the `NativeSlice` read-only pointer directly (zero-copy).
+   - Async mode captures a single compact `UnsafeUtility.MemCpy` of the raw mip bytes on the main thread and expands/compresses one mip level at a time on the worker thread (up to 8× lower peak memory for 1/2/3-channel and 16-bit formats).
+   - 1/2/3-channel and 16-bit UNorm formats expand into 4-channel buffers via internal `IRawData` direct `unsafe` pointer loops with zero heap allocations (missing RGB filled with `0`, missing Alpha with `1.0` / `0xFF`; 16-bit UNorm outputs `F32` to preserve full precision).
+4. **`.astc` Export & Decode**: `EncodeToASTC` encodes mip 0 only and writes the 16-byte little-endian header directly via `AstcHeader.WriteTo` (magic `0x5CA1AB13` + 3-byte block dimensions + 3 × 3-byte 24-bit image dimensions); `AstcHeader.TryParse` + `Encoder.DecompressAstcFile` provide symmetric CPU decoding.
 
 ---
 
@@ -343,27 +350,28 @@ The repository includes [.github/workflows/build-native-plugins.yml](.github/wor
 │   │   │   └── x64/astcenc-sse4.1-shared.dll
 │   │   └── Runtime/
 │   │       ├── Aperture.Astcenc.Runtime.asmdef
-│   │       ├── AstcContext.cs             # Reusable CPU codec context (MT / async / cancellation)
-│   │       ├── Encoder.cs                 # Unified compression API (Cpu / Gpu / Auto backends)
+│   │       ├── AstcCompressOptions.cs     # Unified options struct (Default / NormalMap / Transparent)
+│   │       ├── AstcContext.cs             # Reusable CPU codec context (MT / async / parentContext / decompress)
+│   │       ├── Encoder.cs                 # Unified compression & decompression API (Cpu / Gpu / Auto)
 │   │       ├── EncodeBackend.cs           # Backend enum (Cpu / Gpu / Auto)
 │   │       ├── AstcRaw.cs                 # Unmanaged ASTC data wrapper (IDisposable)
-│   │       ├── AstcHeader.cs              # 16-byte standard .astc header writer
-│   │       ├── ImageExtensions.cs         # Zero-copy / MemCpy / pixel expansion helpers
-│   │       ├── RawTextureData.cs          # Zero-GC pixel format writers (16 structs)
+│   │       ├── AstcHeader.cs              # 16-byte standard .astc header writer & parser
+│   │       ├── ImageExtensions.cs         # Zero-copy / MemCpy / pixel expansion helpers (internal)
+│   │       ├── RawTextureData.cs          # Direct unsafe pointer pixel format writers (internal, 16 structs)
 │   │       ├── BlockSize.cs               # ASTC block size enum (4x4 ~ 12x12)
 │   │       ├── CompressQuality.cs         # Compression quality preset enum
 │   │       ├── TextureType.cs             # Texture type enum (Default / Normal)
 │   │       ├── CodecFlags.cs              # astcenc codec flag enum
 │   │       ├── Cpu/                       # Native CPU backend (astc-encoder P/Invoke)
-│   │       │   └── AstcCpuBackend.cs      # Sync/async compression, snapshots, texture helpers
+│   │       │   └── AstcCpuBackend.cs      # Sync/async compression, compact snapshots & CPU decompression
 │   │       ├── Gpu/                       # GPU Compute Shader backend
-│   │       │   ├── AstcGpuBackend.cs      # GPU dispatch, temp RTs, CopyTexture & AsyncGPUReadback
+│   │       │   ├── AstcGpuBackend.cs      # GPU dispatch, Fast/Full kernels, CopyTexture & AsyncGPUReadback
 │   │       │   └── Shaders/
 │   │       │       ├── AstcGpuBise.hlsl   # Tableless pure-ALU BISE, quantization & 128-bit packer
-│   │       │       ├── AstcGpuColor.hlsl  # sRGB, HDR LNS/FP16, 2-Partition hash & bilinear infill
-│   │       │       └── AstcGpuCore.hlsl   # 4x4~12x12, LDR/Normal/HDR & Fast/Balanced/High cores
+│   │       │       ├── AstcGpuColor.hlsl  # sRGB, HDR LNS/CEM11 delta, 2-Partition hash & bilinear infill
+│   │       │       └── AstcGpuCore.hlsl   # 4x4~12x12, LDR/Normal/HDR, dynamic-CCS Dual-Plane & refit
 │   │       ├── Resources/
-│   │       │   └── AstcGpuEncoder.compute # Unity ComputeShader (6 block sizes x 2 outputs)
+│   │       │   └── AstcGpuEncoder.compute # Unity ComputeShader (6 block sizes x 2 outputs x Fast/Full)
 │   │       └── NativeAPI/                 # Aperture.Astcenc.Runtime.NativeAPI (v5.7.1 P/Invoke)
 │   │           ├── astcenc_api.cs
 │   │           ├── astcenc_config.cs

@@ -5,6 +5,7 @@
   "unity": "2021.3",
   "keywords": ["Texture", "ASTC", "Runtime", "astcenc"],
   "description": "Compress texture to astc format at runtime.",
+  "license": "MIT",
   "dependencies": {
   }
 }
