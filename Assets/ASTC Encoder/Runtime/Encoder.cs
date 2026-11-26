@@ -881,13 +881,11 @@ namespace Aperture.Astcenc.Runtime
             {
                 raw.ThrowIfDisposed();
 
-                byte[] output = new byte[16 + raw.Length];
+                byte[] output = new byte[AstcHeader.HeaderSize + raw.Length];
 
                 GetBlockSize(blockSize, out uint dimX, out uint dimY, out uint dimZ);
-                using AstcHeader header = new AstcHeader(dimX, dimY, dimZ, inputTexture.width, inputTexture.height, 1);
-
-                Marshal.Copy(header.Data, output, 0, 16);
-                Marshal.Copy(raw.Data, output, 16, raw.Length);
+                AstcHeader.WriteTo(output, 0, dimX, dimY, dimZ, inputTexture.width, inputTexture.height, 1);
+                Marshal.Copy(raw.Data, output, AstcHeader.HeaderSize, raw.Length);
 
                 return output;
             }
