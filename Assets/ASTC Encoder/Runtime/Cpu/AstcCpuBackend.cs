@@ -770,10 +770,18 @@ namespace Aperture.Astcenc.Runtime
             int mipCount = includeMipmaps ? inputTexture.mipmapCount : 1;
             TextureCreationFlags flags = mipCount > 1 ? TextureCreationFlags.MipChain : TextureCreationFlags.None;
             var result = new Texture2D(inputTexture.width, inputTexture.height, astcFormat, mipCount, flags);
-            result.name = inputTexture.name;
-            result.LoadRawTextureData(raw);
-            result.Apply(false, true);
-            return result;
+            try
+            {
+                result.name = inputTexture.name;
+                result.LoadRawTextureData(raw);
+                result.Apply(false, true);
+                return result;
+            }
+            catch
+            {
+                UnityEngine.Object.DestroyImmediate(result);
+                throw;
+            }
         }
 
         internal static bool CompressInPlace(

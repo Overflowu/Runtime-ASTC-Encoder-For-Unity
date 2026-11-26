@@ -547,56 +547,65 @@ namespace Aperture.Astcenc.Runtime
                 cancelReg = cancellationToken.Register(() => tcs.TrySetCanceled(cancellationToken));
             }
 
-            AsyncGPUReadback.Request(buffer, request =>
+            try
             {
-                cancelReg.Dispose();
-                try
+                AsyncGPUReadback.Request(buffer, request =>
                 {
-                    if (cancellationToken.IsCancellationRequested || tcs.Task.IsCanceled)
-                    {
-                        tcs.TrySetCanceled(cancellationToken);
-                        return;
-                    }
-
-                    if (request.hasError)
-                    {
-                        Debug.LogError("GPU ASTC async readback failed.");
-                        tcs.TrySetResult(null);
-                        return;
-                    }
-
-                    NativeArray<byte> data = request.GetData<byte>();
-                    int byteLen = data.Length;
-                    IntPtr unmanaged = Marshal.AllocHGlobal(byteLen);
-                    AstcRaw raw = null;
+                    cancelReg.Dispose();
                     try
                     {
-                        unsafe
+                        if (cancellationToken.IsCancellationRequested || tcs.Task.IsCanceled)
                         {
-                            UnsafeUtility.MemCpy((void*)unmanaged, NativeArrayUnsafeUtility.GetUnsafeReadOnlyPtr(data), byteLen);
+                            tcs.TrySetCanceled(cancellationToken);
+                            return;
                         }
 
-                        // Ownership of the unmanaged block moves to AstcRaw from here on; never free it directly again.
-                        raw = new AstcRaw(unmanaged, byteLen);
-                        if (!tcs.TrySetResult(raw))
+                        if (request.hasError)
                         {
-                            raw.Dispose();
+                            Debug.LogError("GPU ASTC async readback failed.");
+                            tcs.TrySetResult(null);
+                            return;
+                        }
+
+                        NativeArray<byte> data = request.GetData<byte>();
+                        int byteLen = data.Length;
+                        IntPtr unmanaged = Marshal.AllocHGlobal(byteLen);
+                        AstcRaw raw = null;
+                        try
+                        {
+                            unsafe
+                            {
+                                UnsafeUtility.MemCpy((void*)unmanaged, NativeArrayUnsafeUtility.GetUnsafeReadOnlyPtr(data), byteLen);
+                            }
+
+                            // Ownership of the unmanaged block moves to AstcRaw from here on; never free it directly again.
+                            raw = new AstcRaw(unmanaged, byteLen);
+                            if (!tcs.TrySetResult(raw))
+                            {
+                                raw.Dispose();
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            if (raw != null)
+                                raw.Dispose();
+                            else
+                                Marshal.FreeHGlobal(unmanaged);
+                            tcs.TrySetException(ex);
                         }
                     }
-                    catch (Exception ex)
+                    finally
                     {
-                        if (raw != null)
-                            raw.Dispose();
-                        else
-                            Marshal.FreeHGlobal(unmanaged);
-                        tcs.TrySetException(ex);
+                        buffer.Release();
                     }
-                }
-                finally
-                {
-                    buffer.Release();
-                }
-            });
+                });
+            }
+            catch
+            {
+                cancelReg.Dispose();
+                buffer.Release();
+                throw;
+            }
 
             return tcs.Task;
         }
@@ -725,24 +734,28 @@ namespace Aperture.Astcenc.Runtime
                     flags |= TextureCreationFlags.MipChain;
 
                 var dst = new Texture2D(source.width, source.height, astcFormat, mipCount, flags);
-                dst.name = source.name;
-                dst.Apply(false, true);
-
                 var cmd = new CommandBuffer { name = "AstcGpuCompressToTexture" };
                 try
                 {
+                    dst.name = source.name;
+                    dst.Apply(false, true);
+
                     for (int mip = 0; mip < mipCount; mip++)
                     {
                         Encode(cmd, source, dst, textureType, blockSize, quality, mip, mip, 0, 0, useAlphaWeight);
                     }
                     Graphics.ExecuteCommandBuffer(cmd);
+                    return dst;
+                }
+                catch
+                {
+                    UnityEngine.Object.DestroyImmediate(dst);
+                    throw;
                 }
                 finally
                 {
                     cmd.Release();
                 }
-
-                return dst;
             }
 
             // Universal GPU path for non-aligned dimensions, full 1x1 mip tails, or non-ASTC desktop Editors (Unity software preview)
@@ -752,10 +765,18 @@ namespace Aperture.Astcenc.Runtime
 
             TextureCreationFlags fallbackFlags = mipCount > 1 ? TextureCreationFlags.MipChain : TextureCreationFlags.None;
             var fallbackTex = new Texture2D(source.width, source.height, astcFormat, mipCount, fallbackFlags);
-            fallbackTex.name = source.name;
-            fallbackTex.LoadRawTextureData(raw);
-            fallbackTex.Apply(false, true);
-            return fallbackTex;
+            try
+            {
+                fallbackTex.name = source.name;
+                fallbackTex.LoadRawTextureData(raw);
+                fallbackTex.Apply(false, true);
+                return fallbackTex;
+            }
+            catch
+            {
+                UnityEngine.Object.DestroyImmediate(fallbackTex);
+                throw;
+            }
         }
 
         internal static bool CompressInPlace(
