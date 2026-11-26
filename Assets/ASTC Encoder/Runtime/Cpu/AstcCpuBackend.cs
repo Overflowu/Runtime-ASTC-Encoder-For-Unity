@@ -804,6 +804,13 @@ namespace Aperture.Astcenc.Runtime
                 return false;
             }
 
+            int mipCount = Math.Max(1, inputTexture.mipmapCount);
+            if (!Encoder.IsFullMipChain(inputTexture.width, inputTexture.height, mipCount))
+            {
+                Debug.LogError($"In-place Compress does not support partial mipmap chains (mipmapCount={mipCount} for {inputTexture.width}x{inputTexture.height}) because Texture2D.Reinitialize allocates a full mipmap chain. Use CompressToTexture instead.");
+                return false;
+            }
+
             using AstcRaw raw = CompressTextureSync(inputTexture, textureType, blockSize, quality, threadCount: threadCount, includeMipmaps: true, useAlphaWeight: useAlphaWeight);
             if (raw == null)
             {

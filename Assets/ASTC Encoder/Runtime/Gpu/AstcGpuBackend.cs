@@ -784,6 +784,11 @@ namespace Aperture.Astcenc.Runtime
             int width = inputTexture.width;
             int height = inputTexture.height;
             int mipCount = Math.Max(1, inputTexture.mipmapCount);
+            if (!Encoder.IsFullMipChain(width, height, mipCount))
+            {
+                Debug.LogError($"In-place Compress does not support partial mipmap chains (mipmapCount={mipCount} for {width}x{height}) because Texture2D.Reinitialize allocates a full mipmap chain. Use CompressToTexture instead.");
+                return false;
+            }
 
             // Fast zero-readback path: encode into temporary per-mip RTs BEFORE Reinitialize wipes source pixels.
             // Only valid when makeNoLongerReadable is true, because Graphics.CopyTexture writes GPU memory only

@@ -144,6 +144,21 @@ namespace Aperture.Astcenc.Runtime
 #endif
         }
 
+        internal static bool IsFullMipChain(int width, int height, int mipCount)
+        {
+            if (mipCount <= 1)
+                return true;
+
+            int maxDim = Math.Max(width, height);
+            int expectedMips = 1;
+            while (maxDim > 1)
+            {
+                maxDim >>= 1;
+                expectedMips++;
+            }
+            return mipCount == expectedMips;
+        }
+
         public static bool IsGpuSupported => AstcGpuBackend.IsSupported;
 
         public static bool SupportsGpuDirectCopy(BlockSize blockSize, bool srgb = false, bool isHdr = false)
