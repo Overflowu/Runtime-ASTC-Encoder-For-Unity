@@ -460,13 +460,13 @@ namespace Aperture.Astcenc.Runtime
                 case GraphicsFormat.B8G8R8A8_SRGB:
                     return SnapshotRawData(inputTexture.GetRawTextureData<RGBA8>(), width, height, 8, mipCount, true);
                 case GraphicsFormat.R16_UNorm:
-                    return SnapshotRawData(inputTexture.GetRawTextureData<R16>(), width, height, 16, mipCount, false);
+                    return SnapshotRawData(inputTexture.GetRawTextureData<R16>(), width, height, 32, mipCount, false);
                 case GraphicsFormat.R16G16_UNorm:
-                    return SnapshotRawData(inputTexture.GetRawTextureData<RG16>(), width, height, 16, mipCount, false);
+                    return SnapshotRawData(inputTexture.GetRawTextureData<RG16>(), width, height, 32, mipCount, false);
                 case GraphicsFormat.R16G16B16_UNorm:
-                    return SnapshotRawData(inputTexture.GetRawTextureData<RGB16>(), width, height, 16, mipCount, false);
+                    return SnapshotRawData(inputTexture.GetRawTextureData<RGB16>(), width, height, 32, mipCount, false);
                 case GraphicsFormat.R16G16B16A16_UNorm:
-                    return SnapshotRawData(inputTexture.GetRawTextureData<RGBA16>(), width, height, 16, mipCount, false);
+                    return SnapshotRawData(inputTexture.GetRawTextureData<RGBA16>(), width, height, 32, mipCount, false);
                 case GraphicsFormat.R16_SFloat:
                     return SnapshotRawData(inputTexture.GetRawTextureData<R16F>(), width, height, 16, mipCount, false);
                 case GraphicsFormat.R16G16_SFloat:
@@ -567,22 +567,22 @@ namespace Aperture.Astcenc.Runtime
                 case GraphicsFormat.R16_UNorm:
                     {
                         NativeArray<R16> raw = inputTexture.GetRawTextureData<R16>();
-                        return CompressRawData(context, swizzle, raw, width, height, 16, mipCount, false, out output, out size);
+                        return CompressRawData(context, swizzle, raw, width, height, 32, mipCount, false, out output, out size);
                     }
                 case GraphicsFormat.R16G16_UNorm:
                     {
                         NativeArray<RG16> raw = inputTexture.GetRawTextureData<RG16>();
-                        return CompressRawData(context, swizzle, raw, width, height, 16, mipCount, false, out output, out size);
+                        return CompressRawData(context, swizzle, raw, width, height, 32, mipCount, false, out output, out size);
                     }
                 case GraphicsFormat.R16G16B16_UNorm:
                     {
                         NativeArray<RGB16> raw = inputTexture.GetRawTextureData<RGB16>();
-                        return CompressRawData(context, swizzle, raw, width, height, 16, mipCount, false, out output, out size);
+                        return CompressRawData(context, swizzle, raw, width, height, 32, mipCount, false, out output, out size);
                     }
                 case GraphicsFormat.R16G16B16A16_UNorm:
                     {
                         NativeArray<RGBA16> raw = inputTexture.GetRawTextureData<RGBA16>();
-                        return CompressRawData(context, swizzle, raw, width, height, 16, mipCount, false, out output, out size);
+                        return CompressRawData(context, swizzle, raw, width, height, 32, mipCount, false, out output, out size);
                     }
                 case GraphicsFormat.R16_SFloat:
                     {

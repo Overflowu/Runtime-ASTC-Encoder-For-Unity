@@ -26,6 +26,11 @@ namespace Aperture.Astcenc.Runtime
         {
             return new FloatUIntUnion { UIntValue = bits }.FloatValue;
         }
+
+        internal static int SingleToInt32Bits(float value)
+        {
+            return unchecked((int)new FloatUIntUnion { FloatValue = value }.UIntValue);
+        }
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -157,14 +162,6 @@ namespace Aperture.Astcenc.Runtime
     [StructLayout(LayoutKind.Sequential)]
     public struct R16 : IRawData
     {
-        internal ushort RHalf
-        {
-            get
-            {
-                return Mathf.FloatToHalf(RFloat);
-            }
-        }
-
         public float RFloat
         {
             get
@@ -176,24 +173,16 @@ namespace Aperture.Astcenc.Runtime
 
         public void WriteTo(IntPtr destPtr)
         {
-            Marshal.WriteInt16(destPtr, 0, unchecked((short)RHalf));
-            Marshal.WriteInt16(destPtr, 2, 0);
-            Marshal.WriteInt16(destPtr, 4, 0);
-            Marshal.WriteInt16(destPtr, 6, RawDataConstants.HalfOne);
+            Marshal.WriteInt32(destPtr, 0, RawDataConstants.SingleToInt32Bits(RFloat));
+            Marshal.WriteInt32(destPtr, 4, 0);
+            Marshal.WriteInt32(destPtr, 8, 0);
+            Marshal.WriteInt32(destPtr, 12, RawDataConstants.FloatOneBits);
         }
     }
 
     [StructLayout(LayoutKind.Sequential)]
     public struct RG16 : IRawData
     {
-        internal ushort RHalf
-        {
-            get
-            {
-                return Mathf.FloatToHalf(RFloat);
-            }
-        }
-
         public float RFloat
         {
             get
@@ -202,14 +191,6 @@ namespace Aperture.Astcenc.Runtime
             }
         }
         private ushort m_R;
-
-        internal ushort GHalf
-        {
-            get
-            {
-                return Mathf.FloatToHalf(GFloat);
-            }
-        }
 
         public float GFloat
         {
@@ -222,24 +203,16 @@ namespace Aperture.Astcenc.Runtime
 
         public void WriteTo(IntPtr destPtr)
         {
-            Marshal.WriteInt16(destPtr, 0, unchecked((short)RHalf));
-            Marshal.WriteInt16(destPtr, 2, unchecked((short)GHalf));
-            Marshal.WriteInt16(destPtr, 4, 0);
-            Marshal.WriteInt16(destPtr, 6, RawDataConstants.HalfOne);
+            Marshal.WriteInt32(destPtr, 0, RawDataConstants.SingleToInt32Bits(RFloat));
+            Marshal.WriteInt32(destPtr, 4, RawDataConstants.SingleToInt32Bits(GFloat));
+            Marshal.WriteInt32(destPtr, 8, 0);
+            Marshal.WriteInt32(destPtr, 12, RawDataConstants.FloatOneBits);
         }
     }
 
     [StructLayout(LayoutKind.Sequential)]
     public struct RGB16 : IRawData
     {
-        internal ushort RHalf
-        {
-            get
-            {
-                return Mathf.FloatToHalf(RFloat);
-            }
-        }
-
         public float RFloat
         {
             get
@@ -249,14 +222,6 @@ namespace Aperture.Astcenc.Runtime
         }
         private ushort m_R;
 
-        internal ushort GHalf
-        {
-            get
-            {
-                return Mathf.FloatToHalf(GFloat);
-            }
-        }
-
         public float GFloat
         {
             get
@@ -265,14 +230,6 @@ namespace Aperture.Astcenc.Runtime
             }
         }
         private ushort m_G;
-
-        internal ushort BHalf
-        {
-            get
-            {
-                return Mathf.FloatToHalf(BFloat);
-            }
-        }
 
         public float BFloat
         {
@@ -285,24 +242,16 @@ namespace Aperture.Astcenc.Runtime
 
         public void WriteTo(IntPtr destPtr)
         {
-            Marshal.WriteInt16(destPtr, 0, unchecked((short)RHalf));
-            Marshal.WriteInt16(destPtr, 2, unchecked((short)GHalf));
-            Marshal.WriteInt16(destPtr, 4, unchecked((short)BHalf));
-            Marshal.WriteInt16(destPtr, 6, RawDataConstants.HalfOne);
+            Marshal.WriteInt32(destPtr, 0, RawDataConstants.SingleToInt32Bits(RFloat));
+            Marshal.WriteInt32(destPtr, 4, RawDataConstants.SingleToInt32Bits(GFloat));
+            Marshal.WriteInt32(destPtr, 8, RawDataConstants.SingleToInt32Bits(BFloat));
+            Marshal.WriteInt32(destPtr, 12, RawDataConstants.FloatOneBits);
         }
     }
 
     [StructLayout(LayoutKind.Sequential)]
     public struct RGBA16 : IRawData
     {
-        internal ushort RHalf
-        {
-            get
-            {
-                return Mathf.FloatToHalf(RFloat);
-            }
-        }
-
         public float RFloat
         {
             get
@@ -311,14 +260,6 @@ namespace Aperture.Astcenc.Runtime
             }
         }
         private ushort m_R;
-
-        internal ushort GHalf
-        {
-            get
-            {
-                return Mathf.FloatToHalf(GFloat);
-            }
-        }
 
         public float GFloat
         {
@@ -329,14 +270,6 @@ namespace Aperture.Astcenc.Runtime
         }
         private ushort m_G;
 
-        internal ushort BHalf
-        {
-            get
-            {
-                return Mathf.FloatToHalf(BFloat);
-            }
-        }
-
         public float BFloat
         {
             get
@@ -345,14 +278,6 @@ namespace Aperture.Astcenc.Runtime
             }
         }
         private ushort m_B;
-
-        internal ushort AHalf
-        {
-            get
-            {
-                return Mathf.FloatToHalf(AFloat);
-            }
-        }
 
         public float AFloat
         {
@@ -365,10 +290,10 @@ namespace Aperture.Astcenc.Runtime
 
         public void WriteTo(IntPtr destPtr)
         {
-            Marshal.WriteInt16(destPtr, 0, unchecked((short)RHalf));
-            Marshal.WriteInt16(destPtr, 2, unchecked((short)GHalf));
-            Marshal.WriteInt16(destPtr, 4, unchecked((short)BHalf));
-            Marshal.WriteInt16(destPtr, 6, unchecked((short)AHalf));
+            Marshal.WriteInt32(destPtr, 0, RawDataConstants.SingleToInt32Bits(RFloat));
+            Marshal.WriteInt32(destPtr, 4, RawDataConstants.SingleToInt32Bits(GFloat));
+            Marshal.WriteInt32(destPtr, 8, RawDataConstants.SingleToInt32Bits(BFloat));
+            Marshal.WriteInt32(destPtr, 12, RawDataConstants.SingleToInt32Bits(AFloat));
         }
     }
 
