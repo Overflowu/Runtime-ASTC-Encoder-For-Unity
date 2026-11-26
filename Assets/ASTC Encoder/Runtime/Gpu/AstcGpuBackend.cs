@@ -786,7 +786,10 @@ namespace Aperture.Astcenc.Runtime
             int mipCount = Math.Max(1, inputTexture.mipmapCount);
 
             // Fast zero-readback path: encode into temporary per-mip RTs BEFORE Reinitialize wipes source pixels.
-            if (CanUseDirectCopy(width, height, mipCount, blockSize, astcFormat)
+            // Only valid when makeNoLongerReadable is true, because Graphics.CopyTexture writes GPU memory only
+            // and would otherwise leave a readable Texture2D with an uninitialized CPU pixel buffer.
+            if (makeNoLongerReadable
+                && CanUseDirectCopy(width, height, mipCount, blockSize, astcFormat)
                 && Encoder.GetBlockSize(blockSize, out uint bx, out uint by, out _))
             {
                 int slot = BlockSizeToSlot(blockSize);
