@@ -39,6 +39,8 @@ namespace Aperture.Astcenc.Runtime
         private static bool s_ShaderLoadAttempted;
         private static int[] s_TexKernels;
         private static int[] s_BufKernels;
+        private static int[] s_TexFastKernels;
+        private static int[] s_BufFastKernels;
 
         private static readonly int s_PropTempBlocksRT = Shader.PropertyToID("_AstcTempBlocksRT");
 
@@ -140,10 +142,17 @@ namespace Aperture.Astcenc.Runtime
 
         internal static GraphicsFormat ResolveTargetAstcFormat(GraphicsFormat sourceFormat, TextureType textureType, BlockSize blockSize, out bool isSRGB, out bool isHdr)
         {
+            if (textureType == TextureType.Normal)
+            {
+                // Tangent-space normal maps always emit linear UNorm ASTC regardless of sRGB or float source format.
+                isSRGB = false;
+                isHdr = false;
+                return GetAstcGraphicsFormat(blockSize, false, false);
+            }
+
             bool sourceIsSRGB = GraphicsFormatUtility.IsSRGBFormat(sourceFormat);
             isHdr = !sourceIsSRGB && GraphicsFormatUtility.IsFloatFormat(sourceFormat);
-            // Normal maps store linear tangent-space vectors; never emit an sRGB ASTC target for them.
-            isSRGB = sourceIsSRGB && textureType != TextureType.Normal;
+            isSRGB = sourceIsSRGB;
             return GetAstcGraphicsFormat(blockSize, isSRGB, isHdr);
         }
 
@@ -217,16 +226,27 @@ namespace Aperture.Astcenc.Runtime
             };
         }
 
+        private static int GetTexKernel(int slot, uint qualityTier)
+        {
+            return qualityTier == 0u ? s_TexFastKernels[slot] : s_TexKernels[slot];
+        }
+
+        private static int GetBufKernel(int slot, uint qualityTier)
+        {
+            return qualityTier == 0u ? s_BufFastKernels[slot] : s_BufKernels[slot];
+        }
+
         private static uint ResolveShaderMode(GraphicsFormat sourceFormat, TextureType textureType, out bool isSRGB, out bool isHdr)
         {
             isSRGB = GraphicsFormatUtility.IsSRGBFormat(sourceFormat);
-            isHdr = !isSRGB && GraphicsFormatUtility.IsFloatFormat(sourceFormat);
 
-            if (textureType == TextureType.Normal && !isHdr)
+            if (textureType == TextureType.Normal)
             {
+                isHdr = false;
                 return k_ModeLdrNormal;
             }
 
+            isHdr = !isSRGB && GraphicsFormatUtility.IsFloatFormat(sourceFormat);
             bool hasAlpha = GraphicsFormatUtility.HasAlphaChannel(sourceFormat);
             if (isHdr)
             {
@@ -272,6 +292,26 @@ namespace Aperture.Astcenc.Runtime
                 s_Shader.FindKernel("EncodeBuf12x12"),
             };
 
+            s_TexFastKernels = new int[6]
+            {
+                s_Shader.FindKernel("EncodeTex4x4Fast"),
+                s_Shader.FindKernel("EncodeTex5x5Fast"),
+                s_Shader.FindKernel("EncodeTex6x6Fast"),
+                s_Shader.FindKernel("EncodeTex8x8Fast"),
+                s_Shader.FindKernel("EncodeTex10x10Fast"),
+                s_Shader.FindKernel("EncodeTex12x12Fast"),
+            };
+
+            s_BufFastKernels = new int[6]
+            {
+                s_Shader.FindKernel("EncodeBuf4x4Fast"),
+                s_Shader.FindKernel("EncodeBuf5x5Fast"),
+                s_Shader.FindKernel("EncodeBuf6x6Fast"),
+                s_Shader.FindKernel("EncodeBuf8x8Fast"),
+                s_Shader.FindKernel("EncodeBuf10x10Fast"),
+                s_Shader.FindKernel("EncodeBuf12x12Fast"),
+            };
+
             return true;
         }
 
@@ -297,18 +337,42 @@ namespace Aperture.Astcenc.Runtime
 
             var dummySrc = new Texture2D(4, 4, GraphicsFormat.R8G8B8A8_UNorm, TextureCreationFlags.None);
             RenderTexture rt = null;
+            ComputeBuffer buf = null;
             try
             {
                 rt = RenderTexture.GetTemporary(CreateBlockRTDescriptor(1, 1));
                 rt.Create();
+                buf = new ComputeBuffer(1, k_BytesPerBlock, ComputeBufferType.Structured);
+
+                // Warm up both Fast and Full kernels for Texture and Buffer outputs to prevent first-use PSO stalls.
+                int texFastKernel = s_TexFastKernels[slot];
+                s_Shader.SetTexture(texFastKernel, s_PropSourceTex, dummySrc);
+                s_Shader.SetTexture(texFastKernel, s_PropDestTex, rt);
+                SetCommonUniforms(s_Shader, 4, 4, 0, 1, 1, 0, k_ModeLdrRgb, false, false, 0u);
+                s_Shader.Dispatch(texFastKernel, 1, 1, 1);
+
+                int bufFastKernel = s_BufFastKernels[slot];
+                s_Shader.SetTexture(bufFastKernel, s_PropSourceTex, dummySrc);
+                s_Shader.SetBuffer(bufFastKernel, s_PropDestBuffer, buf);
+                SetCommonUniforms(s_Shader, 4, 4, 0, 1, 1, 0, k_ModeLdrRgb, false, false, 0u);
+                s_Shader.Dispatch(bufFastKernel, 1, 1, 1);
+
                 int texKernel = s_TexKernels[slot];
                 s_Shader.SetTexture(texKernel, s_PropSourceTex, dummySrc);
                 s_Shader.SetTexture(texKernel, s_PropDestTex, rt);
-                SetCommonUniforms(s_Shader, 4, 4, 0, 1, 1, 0, k_ModeLdrRgb, false, false, 0u);
+                SetCommonUniforms(s_Shader, 4, 4, 0, 1, 1, 0, k_ModeLdrRgb, false, false, 1u);
                 s_Shader.Dispatch(texKernel, 1, 1, 1);
+
+                int bufKernel = s_BufKernels[slot];
+                s_Shader.SetTexture(bufKernel, s_PropSourceTex, dummySrc);
+                s_Shader.SetBuffer(bufKernel, s_PropDestBuffer, buf);
+                SetCommonUniforms(s_Shader, 4, 4, 0, 1, 1, 0, k_ModeLdrRgb, false, false, 1u);
+                s_Shader.Dispatch(bufKernel, 1, 1, 1);
             }
             finally
             {
+                if (buf != null)
+                    buf.Release();
                 if (rt != null)
                     RenderTexture.ReleaseTemporary(rt);
                 UnityEngine.Object.DestroyImmediate(dummySrc);
@@ -334,6 +398,8 @@ namespace Aperture.Astcenc.Runtime
             s_ShaderLoadAttempted = false;
             s_TexKernels = null;
             s_BufKernels = null;
+            s_TexFastKernels = null;
+            s_BufFastKernels = null;
         }
 
         private static void SetCommonUniforms(
@@ -410,7 +476,7 @@ namespace Aperture.Astcenc.Runtime
 
             uint mode = ResolveShaderMode(source.graphicsFormat, textureType, out bool isSRGB, out _);
             uint qualityTier = MapQualityTier(quality);
-            int kernel = s_BufKernels[slot];
+            int kernel = GetBufKernel(slot, qualityTier);
 
             var buffer = new ComputeBuffer(totalBlocks, k_BytesPerBlock, ComputeBufferType.Structured);
             try
@@ -480,25 +546,54 @@ namespace Aperture.Astcenc.Runtime
 
             try
             {
+                // Avoid LOH managed array allocation when AsyncGPUReadback is available.
+                if (SystemInfo.supportsAsyncGPUReadback)
+                {
+                    AsyncGPUReadbackRequest req = AsyncGPUReadback.Request(buffer);
+                    req.WaitForCompletion();
+                    if (req.hasError)
+                    {
+                        Debug.LogError("GPU ASTC readback failed.");
+                        return null;
+                    }
+
+                    NativeArray<byte> data = req.GetData<byte>();
+                    int byteLen = data.Length;
+                    IntPtr unmanaged = Marshal.AllocHGlobal(byteLen);
+                    try
+                    {
+                        unsafe
+                        {
+                            UnsafeUtility.MemCpy((void*)unmanaged, NativeArrayUnsafeUtility.GetUnsafeReadOnlyPtr(data), byteLen);
+                        }
+                        return new AstcRaw(unmanaged, byteLen);
+                    }
+                    catch
+                    {
+                        Marshal.FreeHGlobal(unmanaged);
+                        throw;
+                    }
+                }
+
                 int totalBlocks = totalBytes / k_BytesPerBlock;
                 var blocks = new AstcBlock128[totalBlocks];
                 buffer.GetData(blocks);
 
-                IntPtr unmanaged = Marshal.AllocHGlobal(totalBytes);
+                IntPtr fallbackUnmanaged = Marshal.AllocHGlobal(totalBytes);
                 try
                 {
                     unsafe
                     {
                         fixed (AstcBlock128* srcPtr = blocks)
                         {
-                            UnsafeUtility.MemCpy((void*)unmanaged, srcPtr, totalBytes);
+                            UnsafeUtility.MemCpy((void*)fallbackUnmanaged, srcPtr, totalBytes);
                         }
                     }
-                    return new AstcRaw(unmanaged, totalBytes);
+                    return new AstcRaw(fallbackUnmanaged, totalBytes);
                 }
                 catch
                 {
-                    Marshal.FreeHGlobal(unmanaged);
+                    Marshal.FreeHGlobal(fallbackUnmanaged);
                     throw;
                 }
             }
@@ -645,12 +740,11 @@ namespace Aperture.Astcenc.Runtime
             if (slot < 0 || !Encoder.GetBlockSize(blockSize, out uint bx, out uint by, out _))
                 throw new ArgumentException($"Unsupported ASTC block size: {blockSize}", nameof(blockSize));
 
+            GraphicsFormat expectedFormat = ResolveTargetAstcFormat(source.graphicsFormat, textureType, blockSize, out _, out _);
             GraphicsFormat dstFormat = destination.graphicsFormat;
-            if (dstFormat != GetAstcGraphicsFormat(blockSize, false, false)
-                && dstFormat != GetAstcGraphicsFormat(blockSize, true, false)
-                && dstFormat != GetAstcGraphicsFormat(blockSize, false, true))
+            if (dstFormat != expectedFormat)
             {
-                throw new ArgumentException($"Destination texture format '{dstFormat}' does not match ASTC block size {blockSize}.", nameof(destination));
+                throw new ArgumentException($"Destination texture format '{dstFormat}' does not match expected ASTC format '{expectedFormat}' for source format '{source.graphicsFormat}', textureType '{textureType}', and blockSize '{blockSize}'.", nameof(destination));
             }
 
             if (!IsSampleSupported(dstFormat))
@@ -682,7 +776,7 @@ namespace Aperture.Astcenc.Runtime
 
             uint mode = ResolveShaderMode(source.graphicsFormat, textureType, out bool isSRGB, out _);
             uint qualityTier = MapQualityTier(quality);
-            int kernel = s_TexKernels[slot];
+            int kernel = GetTexKernel(slot, qualityTier);
 
             // Temp RT lifetime is owned by the CommandBuffer, so it stays valid however late the buffer executes.
             var tempRT = new RenderTargetIdentifier(s_PropTempBlocksRT);
@@ -781,6 +875,73 @@ namespace Aperture.Astcenc.Runtime
             }
         }
 
+        internal static async Task<Texture2D> CompressToTextureAsync(
+            Texture source,
+            TextureType textureType,
+            BlockSize blockSize,
+            CompressQuality quality,
+            bool includeMipmaps,
+            bool useAlphaWeight,
+            CancellationToken cancellationToken)
+        {
+            if (cancellationToken.IsCancellationRequested)
+            {
+                throw new OperationCanceledException(cancellationToken);
+            }
+
+            if (!IsSupported)
+            {
+                Debug.LogError("GPU ASTC compression is not supported on this device.");
+                return null;
+            }
+
+            if (!IsInputSupported(source))
+            {
+                Debug.LogError("Input texture is null or not a valid 2D texture for GPU ASTC compression.");
+                return null;
+            }
+
+            GraphicsFormat astcFormat = ResolveTargetAstcFormat(source.graphicsFormat, textureType, blockSize, out _, out _);
+            if (!Encoder.CanCreateAstcTexture(astcFormat))
+            {
+                Debug.LogError($"ASTC texture format '{astcFormat}' is not supported on this device. Use CompressTextureAsync or EncodeToASTCAsync for raw ASTC data.");
+                return null;
+            }
+
+            int width = source.width;
+            int height = source.height;
+            int mipCount = includeMipmaps ? Math.Max(1, source.mipmapCount) : 1;
+            string texName = source.name;
+
+            // Zero-readback GPU-only path is already non-blocking on the CPU.
+            if (CanUseDirectCopy(width, height, mipCount, blockSize, astcFormat))
+            {
+                return CompressToTexture(source, textureType, blockSize, quality, includeMipmaps, useAlphaWeight);
+            }
+
+            // Non-blocking AsyncGPUReadback path for mipmapped or non-block-aligned textures.
+            using AstcRaw raw = await CompressTextureAsync(source, textureType, blockSize, quality, includeMipmaps, useAlphaWeight, cancellationToken);
+            if (raw == null)
+                return null;
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            TextureCreationFlags flags = mipCount > 1 ? TextureCreationFlags.MipChain : TextureCreationFlags.None;
+            var result = new Texture2D(width, height, astcFormat, mipCount, flags);
+            try
+            {
+                result.name = texName;
+                result.LoadRawTextureData(raw);
+                result.Apply(false, true);
+                return result;
+            }
+            catch
+            {
+                UnityEngine.Object.DestroyImmediate(result);
+                throw;
+            }
+        }
+
         internal static bool CompressInPlace(
             Texture2D inputTexture,
             TextureType textureType,
@@ -832,7 +993,7 @@ namespace Aperture.Astcenc.Runtime
                 int slot = BlockSizeToSlot(blockSize);
                 uint mode = ResolveShaderMode(inputTexture.graphicsFormat, textureType, out bool isSRGB, out _);
                 uint qualityTier = MapQualityTier(quality);
-                int kernel = s_TexKernels[slot];
+                int kernel = GetTexKernel(slot, qualityTier);
 
                 var mipRTs = new RenderTexture[mipCount];
                 try
