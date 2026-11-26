@@ -547,20 +547,27 @@ namespace Aperture.Astcenc.Runtime
                     NativeArray<byte> data = request.GetData<byte>();
                     int byteLen = data.Length;
                     IntPtr unmanaged = Marshal.AllocHGlobal(byteLen);
+                    AstcRaw raw = null;
                     try
                     {
                         unsafe
                         {
                             UnsafeUtility.MemCpy((void*)unmanaged, NativeArrayUnsafeUtility.GetUnsafeReadOnlyPtr(data), byteLen);
                         }
-                        if (!tcs.TrySetResult(new AstcRaw(unmanaged, byteLen)))
+
+                        // Ownership of the unmanaged block moves to AstcRaw from here on; never free it directly again.
+                        raw = new AstcRaw(unmanaged, byteLen);
+                        if (!tcs.TrySetResult(raw))
                         {
-                            Marshal.FreeHGlobal(unmanaged);
+                            raw.Dispose();
                         }
                     }
                     catch (Exception ex)
                     {
-                        Marshal.FreeHGlobal(unmanaged);
+                        if (raw != null)
+                            raw.Dispose();
+                        else
+                            Marshal.FreeHGlobal(unmanaged);
                         tcs.TrySetException(ex);
                     }
                 }
