@@ -107,7 +107,7 @@ namespace Aperture.Astcenc.Runtime
             if (!IsSupported)
                 return false;
 
-            if (SystemInfo.copyTextureSupport == CopyTextureSupport.None)
+            if ((SystemInfo.copyTextureSupport & CopyTextureSupport.RTToTexture) == 0)
                 return false;
 
             GraphicsFormat astcFormat = GetAstcGraphicsFormat(blockSize, srgb, isHdr);
@@ -116,7 +116,7 @@ namespace Aperture.Astcenc.Runtime
 
         internal static bool CanUseDirectCopy(int width, int height, int mipCount, BlockSize blockSize, GraphicsFormat astcFormat)
         {
-            if (SystemInfo.copyTextureSupport == CopyTextureSupport.None)
+            if ((SystemInfo.copyTextureSupport & CopyTextureSupport.RTToTexture) == 0)
                 return false;
 
             if (!IsSampleSupported(astcFormat))
@@ -624,6 +624,9 @@ namespace Aperture.Astcenc.Runtime
             if (!IsSupported)
                 throw new NotSupportedException("GPU ASTC compression is not supported on this device.");
 
+            if ((SystemInfo.copyTextureSupport & CopyTextureSupport.RTToTexture) == 0)
+                throw new NotSupportedException("GPU direct CopyTexture from RenderTexture to Texture is not supported on this device.");
+
             if (!IsInputSupported(source))
                 throw new ArgumentException("Source texture is not a supported 2D texture for GPU ASTC encoding.", nameof(source));
 
@@ -638,6 +641,9 @@ namespace Aperture.Astcenc.Runtime
             {
                 throw new ArgumentException($"Destination texture format '{dstFormat}' does not match ASTC block size {blockSize}.", nameof(destination));
             }
+
+            if (!IsSampleSupported(dstFormat))
+                throw new NotSupportedException($"Destination ASTC format '{dstFormat}' is not natively supported by this GPU.");
 
             int srcMipCount = Math.Max(1, source.mipmapCount);
             if (sourceMip < 0 || sourceMip >= srcMipCount)
