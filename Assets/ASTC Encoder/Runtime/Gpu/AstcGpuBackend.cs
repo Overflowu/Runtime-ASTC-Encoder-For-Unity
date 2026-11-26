@@ -76,11 +76,27 @@ namespace Aperture.Astcenc.Runtime
 
         internal static bool IsInputSupported(Texture texture)
         {
-            return texture != null
-                && texture.dimension == TextureDimension.Tex2D
-                && texture.width > 0
-                && texture.height > 0
-                && texture.graphicsFormat != GraphicsFormat.None;
+            if (texture == null
+                || texture.dimension != TextureDimension.Tex2D
+                || texture.width <= 0
+                || texture.height <= 0)
+            {
+                return false;
+            }
+
+            GraphicsFormat format = texture.graphicsFormat;
+            if (format == GraphicsFormat.None)
+                return false;
+
+            // _AstcSourceTex is bound as Texture2D<float4>; depth/stencil/integer formats cannot be loaded as float4.
+            if (GraphicsFormatUtility.IsDepthFormat(format)
+                || GraphicsFormatUtility.IsStencilFormat(format)
+                || GraphicsFormatUtility.IsIntegerFormat(format))
+            {
+                return false;
+            }
+
+            return true;
         }
 
         internal static bool SupportsDirectCopy(BlockSize blockSize, bool srgb, bool isHdr)
