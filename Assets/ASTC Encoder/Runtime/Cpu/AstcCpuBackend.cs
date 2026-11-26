@@ -17,7 +17,7 @@ namespace Aperture.Astcenc.Runtime
     {
         private const int k_BytePerBlock = 16;
 
-        internal static bool IsSupported => true;
+        internal static bool IsSupported => astcenc_api.IsNativeLibraryAvailable;
 
         internal static bool IsSupportGraphicFormat(GraphicsFormat graphicsFormat)
         {
@@ -523,6 +523,12 @@ namespace Aperture.Astcenc.Runtime
 
         internal static AstcRaw CompressTextureWithContext(Texture2D inputTexture, AstcContext context, TextureType textureType, bool includeMipmaps)
         {
+            if (!IsSupported)
+            {
+                Debug.LogError("Native CPU ASTC compression library is not available on this platform.");
+                return null;
+            }
+
             if (!IsInputSupported(inputTexture))
             {
                 Debug.LogError("Texture format is not support or read/write is disabled.");
@@ -564,6 +570,12 @@ namespace Aperture.Astcenc.Runtime
             if (cancellationToken.IsCancellationRequested)
             {
                 return Task.FromCanceled<AstcRaw>(cancellationToken);
+            }
+
+            if (!IsSupported)
+            {
+                Debug.LogError("Native CPU ASTC compression library is not available on this platform.");
+                return Task.FromResult<AstcRaw>(null);
             }
 
             if (!IsInputSupported(inputTexture))
@@ -628,6 +640,12 @@ namespace Aperture.Astcenc.Runtime
             bool includeMipmaps = true,
             bool useAlphaWeight = false)
         {
+            if (!IsSupported)
+            {
+                Debug.LogError("Native CPU ASTC compression library is not available on this platform.");
+                return null;
+            }
+
             if (!IsInputSupported(inputTexture))
             {
                 Debug.LogError("Texture format is not support or read/write is disabled.");
@@ -656,6 +674,12 @@ namespace Aperture.Astcenc.Runtime
             if (cancellationToken.IsCancellationRequested)
             {
                 return Task.FromCanceled<AstcRaw>(cancellationToken);
+            }
+
+            if (!IsSupported)
+            {
+                Debug.LogError("Native CPU ASTC compression library is not available on this platform.");
+                return Task.FromResult<AstcRaw>(null);
             }
 
             if (!IsInputSupported(inputTexture))

@@ -6,6 +6,7 @@ namespace Aperture.Astcenc.Runtime.NativeAPI
 public static class astcenc_api
 {
 #if UNITY_ANDROID && !UNITY_EDITOR
+    internal const bool IsNativeLibraryAvailable = true;
     private const string NeonLibraryName = "libastcenc-neon-shared";
     private const string NoneLibraryName = "libastcenc-none-shared";
 
@@ -229,6 +230,7 @@ public static class astcenc_api
             astcenc_context_free_none(context);
     }
 #elif UNITY_EDITOR_OSX || UNITY_EDITOR_WIN || (!UNITY_EDITOR && (UNITY_IOS || UNITY_STANDALONE_OSX || UNITY_STANDALONE_WIN))
+    internal const bool IsNativeLibraryAvailable = true;
 #if UNITY_EDITOR_OSX
     internal const string LibraryName = "libastcenc-shared";
 #elif UNITY_EDITOR_WIN
@@ -359,6 +361,8 @@ public static class astcenc_api
     public static extern void astcenc_context_free(
         IntPtr context);
 #else
+    internal const bool IsNativeLibraryAvailable = false;
+
     public static astcenc_error astcenc_config_init(
         astcenc_profile profile,
         uint block_x,

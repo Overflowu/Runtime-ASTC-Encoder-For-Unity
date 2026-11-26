@@ -66,6 +66,12 @@ namespace Aperture.Astcenc.Runtime
             int threadCount = 1,
             bool useAlphaWeight = false)
         {
+            if (!AstcCpuBackend.IsSupported)
+            {
+                Debug.LogError("Native CPU ASTC compression library is not available on this platform.");
+                return null;
+            }
+
             if (!AstcCpuBackend.IsSupportGraphicFormat(graphicsFormat))
             {
                 Debug.LogError("Unsupported GraphicsFormat: " + graphicsFormat);
