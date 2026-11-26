@@ -626,6 +626,7 @@ float AstcEvalError1P(
     uint wQuant, uint epQuant)
 {
     uint epCodes[16];
+    for (uint e = 0u; e < 16u; ++e) epCodes[e] = 0u;
     float4 uqE0, uqE1;
     AstcQuantizeEndpoints(e0, e1, effMode, epQuant, epCodes, 0u, uqE0, uqE1);
 
@@ -677,6 +678,7 @@ float AstcEvalErrorDualPlane(
     uint wQuant, uint epQuant)
 {
     uint epCodes[16];
+    for (uint e = 0u; e < 16u; ++e) epCodes[e] = 0u;
     float4 uqE0, uqE1;
     AstcQuantizeEndpoints(e0, e1, effMode, epQuant, epCodes, 0u, uqE0, uqE1);
 
@@ -738,6 +740,7 @@ float AstcEvalError2P(
     uint wQuant, uint epQuant)
 {
     uint epCodes[16];
+    for (uint e = 0u; e < 16u; ++e) epCodes[e] = 0u;
     uint epPerPart = AstcGetEpCountForEffMode(effMode);
     float4 uq0_p0, uq1_p0, uq0_p1, uq1_p1;
     AstcQuantizeEndpoints(e0_p0, e1_p0, effMode, epQuant, epCodes, 0u, uq0_p0, uq1_p0);
