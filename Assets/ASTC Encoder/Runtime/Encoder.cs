@@ -1,5 +1,6 @@
 using System;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Threading.Tasks;
 using Unity.Collections;
 using UnityEngine;
@@ -515,7 +516,7 @@ namespace Aperture.Astcenc.Runtime
             }
         }
 
-        private static AstcRaw CompressSnapshots(AstcContext context, astcenc_swizzle swizzle, astcenc_image[] mipmaps)
+        private static AstcRaw CompressSnapshots(AstcContext context, astcenc_swizzle swizzle, astcenc_image[] mipmaps, CancellationToken cancellationToken)
         {
             uint blockX = context.BlockX;
             uint blockY = context.BlockY;
@@ -532,8 +533,9 @@ namespace Aperture.Astcenc.Runtime
             {
                 for (int i = 0; i < mipmaps.Length; i++)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     int length = CalculateMipByteLength((int)mipmaps[i].dim_x, (int)mipmaps[i].dim_y, blockX, blockY);
-                    astcenc_error status = context.CompressSingleImage(ref mipmaps[i], ref swizzle, output + byteWrited, length);
+                    astcenc_error status = context.CompressSingleImage(ref mipmaps[i], ref swizzle, output + byteWrited, length, cancellationToken);
                     if (status != astcenc_error.ASTCENC_SUCCESS)
                     {
                         throw new Exception(status.ToString());
@@ -542,6 +544,11 @@ namespace Aperture.Astcenc.Runtime
                 }
 
                 return new AstcRaw(output, total);
+            }
+            catch (OperationCanceledException)
+            {
+                Marshal.FreeHGlobal(output);
+                throw;
             }
             catch (Exception ex)
             {
@@ -691,8 +698,13 @@ namespace Aperture.Astcenc.Runtime
             return new AstcRaw(output, size);
         }
 
-        internal static Task<AstcRaw> CompressTextureWithContextAsync(Texture2D inputTexture, AstcContext context, TextureType textureType, bool includeMipmaps)
+        internal static Task<AstcRaw> CompressTextureWithContextAsync(Texture2D inputTexture, AstcContext context, TextureType textureType, bool includeMipmaps, CancellationToken cancellationToken = default)
         {
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return Task.FromCanceled<AstcRaw>(cancellationToken);
+            }
+
             if (!IsSupport(inputTexture))
             {
                 Debug.LogError("Texture format is not support or read/write is disabled.");
@@ -736,7 +748,8 @@ namespace Aperture.Astcenc.Runtime
             {
                 try
                 {
-                    return CompressSnapshots(context, swizzle, snapshots);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    return CompressSnapshots(context, swizzle, snapshots, cancellationToken);
                 }
                 finally
                 {
@@ -780,9 +793,15 @@ namespace Aperture.Astcenc.Runtime
         /// <param name="blockSize">Astc compress ratio</param>
         /// <param name="quality">Compress quality setting</param>
         /// <param name="threadCount">Worker thread count (&lt;= 0 = auto based on CPU cores)</param>
+        /// <param name="cancellationToken">Optional cancellation token to abort compression via astcenc_compress_cancel</param>
         /// <returns>Task yielding compressed AstcRaw data or null on failure</returns>
-        public static Task<AstcRaw> CompressTextureAsync(this Texture2D inputTexture, TextureType textureType = TextureType.Default, BlockSize blockSize = BlockSize.ASTC_6x6, CompressQuality quality = CompressQuality.Fast, int threadCount = 0)
+        public static Task<AstcRaw> CompressTextureAsync(this Texture2D inputTexture, TextureType textureType = TextureType.Default, BlockSize blockSize = BlockSize.ASTC_6x6, CompressQuality quality = CompressQuality.Fast, int threadCount = 0, CancellationToken cancellationToken = default)
         {
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return Task.FromCanceled<AstcRaw>(cancellationToken);
+            }
+
             if (!IsSupport(inputTexture))
             {
                 Debug.LogError("Texture format is not support or read/write is disabled.");
@@ -819,13 +838,14 @@ namespace Aperture.Astcenc.Runtime
             {
                 try
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     using AstcContext context = AstcContext.Create(graphicsFormat, textureType, blockSize, quality, threadCount);
                     if (context == null)
                     {
                         return null;
                     }
 
-                    return CompressSnapshots(context, swizzle, snapshots);
+                    return CompressSnapshots(context, swizzle, snapshots, cancellationToken);
                 }
                 finally
                 {

@@ -122,10 +122,10 @@ namespace Aperture.Astcenc.Runtime
         /// Captures pixel data on the calling (main) thread and compresses asynchronously on background thread(s) reusing this context.
         /// Caller must keep this AstcContext alive until the returned Task completes and dispose the returned AstcRaw after use.
         /// </summary>
-        public Task<AstcRaw> CompressTextureAsync(Texture2D inputTexture, TextureType textureType = TextureType.Default)
+        public Task<AstcRaw> CompressTextureAsync(Texture2D inputTexture, TextureType textureType = TextureType.Default, CancellationToken cancellationToken = default)
         {
             ThrowIfDisposed();
-            return Encoder.CompressTextureWithContextAsync(inputTexture, this, textureType, true);
+            return Encoder.CompressTextureWithContextAsync(inputTexture, this, textureType, true, cancellationToken);
         }
 
         internal bool IsCompatibleWith(GraphicsFormat graphicsFormat, TextureType textureType)
@@ -134,52 +134,59 @@ namespace Aperture.Astcenc.Runtime
                 && Encoder.GetFlags(textureType, graphicsFormat) == Flags;
         }
 
-        internal astcenc_error CompressSingleImage(ref astcenc_image image, ref astcenc_swizzle swizzle, IntPtr output, int outputLength)
+        internal astcenc_error CompressSingleImage(ref astcenc_image image, ref astcenc_swizzle swizzle, IntPtr output, int outputLength, CancellationToken cancellationToken = default)
         {
             lock (m_SyncLock)
             {
                 ThrowIfDisposed();
+                cancellationToken.ThrowIfCancellationRequested();
 
                 astcenc_error status;
-                try
+                using (CancellationTokenRegistration cancelRegistration = cancellationToken.CanBeCanceled
+                    ? cancellationToken.Register(() => astcenc_api.astcenc_compress_cancel(m_Context))
+                    : default)
                 {
-                    if (ThreadCount == 1 || outputLength <= k_ParallelMinOutputBytes)
+                    try
                     {
-                        status = astcenc_api.astcenc_compress_image(m_Context, ref image, ref swizzle, output, new UIntPtr((uint)outputLength), 0);
-                    }
-                    else
-                    {
-                        astcenc_image imageCopy = image;
-                        astcenc_swizzle swizzleCopy = swizzle;
-                        UIntPtr dataLen = new UIntPtr((uint)outputLength);
-                        int firstError = (int)astcenc_error.ASTCENC_SUCCESS;
-
-                        Parallel.For(0, ThreadCount, threadIndex =>
+                        if (ThreadCount == 1 || outputLength <= k_ParallelMinOutputBytes)
                         {
-                            astcenc_image localImage = imageCopy;
-                            astcenc_swizzle localSwizzle = swizzleCopy;
-                            astcenc_error threadStatus = astcenc_api.astcenc_compress_image(
-                                m_Context,
-                                ref localImage,
-                                ref localSwizzle,
-                                output,
-                                dataLen,
-                                (uint)threadIndex);
+                            status = astcenc_api.astcenc_compress_image(m_Context, ref image, ref swizzle, output, new UIntPtr((uint)outputLength), 0);
+                        }
+                        else
+                        {
+                            astcenc_image imageCopy = image;
+                            astcenc_swizzle swizzleCopy = swizzle;
+                            UIntPtr dataLen = new UIntPtr((uint)outputLength);
+                            int firstError = (int)astcenc_error.ASTCENC_SUCCESS;
 
-                            if (threadStatus != astcenc_error.ASTCENC_SUCCESS)
+                            Parallel.For(0, ThreadCount, threadIndex =>
                             {
-                                Interlocked.CompareExchange(ref firstError, (int)threadStatus, (int)astcenc_error.ASTCENC_SUCCESS);
-                            }
-                        });
+                                astcenc_image localImage = imageCopy;
+                                astcenc_swizzle localSwizzle = swizzleCopy;
+                                astcenc_error threadStatus = astcenc_api.astcenc_compress_image(
+                                    m_Context,
+                                    ref localImage,
+                                    ref localSwizzle,
+                                    output,
+                                    dataLen,
+                                    (uint)threadIndex);
 
-                        status = (astcenc_error)firstError;
+                                if (threadStatus != astcenc_error.ASTCENC_SUCCESS)
+                                {
+                                    Interlocked.CompareExchange(ref firstError, (int)threadStatus, (int)astcenc_error.ASTCENC_SUCCESS);
+                                }
+                            });
+
+                            status = (astcenc_error)firstError;
+                        }
+                    }
+                    finally
+                    {
+                        astcenc_api.astcenc_compress_reset(m_Context);
                     }
                 }
-                finally
-                {
-                    astcenc_api.astcenc_compress_reset(m_Context);
-                }
 
+                cancellationToken.ThrowIfCancellationRequested();
                 return status;
             }
         }
