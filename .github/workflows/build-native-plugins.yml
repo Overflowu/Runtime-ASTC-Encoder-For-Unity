@@ -191,12 +191,14 @@ jobs:
         run: |
           cmake --build "build-android-${{ matrix.abi }}" --target "${{ matrix.target }}" --parallel
 
-      - name: Verify shared library
+      - name: Strip and verify shared library
         run: |
           SO="build-android-${{ matrix.abi }}/Source/${{ matrix.output_name }}"
           test -f "$SO"
-          file "$SO"
           LLVM_BIN="$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          "$LLVM_BIN/llvm-strip" --strip-unneeded "$SO"
+          ls -lh "$SO"
+          file "$SO"
           "$LLVM_BIN/llvm-readelf" -l "$SO" | grep LOAD
           "$LLVM_BIN/llvm-nm" -D --defined-only "$SO" | grep "astcenc_config_init"
 
