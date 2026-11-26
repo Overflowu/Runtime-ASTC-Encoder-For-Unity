@@ -387,8 +387,9 @@ namespace Aperture.Astcenc.Runtime
                     byteWrited += length;
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                Debug.LogError("ASTC compress failed: " + ex.Message);
                 Marshal.FreeHGlobal(output);
 
                 output = IntPtr.Zero;
@@ -518,7 +519,11 @@ namespace Aperture.Astcenc.Runtime
             }
 
             uint threadCount = 1;
-            GetBlockSize(blockSize, out uint blockX, out uint blockY, out uint blockZ);
+            if (!GetBlockSize(blockSize, out uint blockX, out uint blockY, out uint blockZ))
+            {
+                Debug.LogError("Unsupported ASTC block size: " + blockSize);
+                return null;
+            }
 
             float qualityValue = GetQualityValue(quality);
 
@@ -543,9 +548,18 @@ namespace Aperture.Astcenc.Runtime
                 return null;
             }
 
-            CompressImage(inputTexture, context, swizzle, blockX, blockY, out IntPtr output, out int size);
+            bool success = CompressImage(inputTexture, context, swizzle, blockX, blockY, out IntPtr output, out int size);
 
             astcenc_api.astcenc_context_free(context);
+
+            if (!success || output == IntPtr.Zero || size <= 0)
+            {
+                if (output != IntPtr.Zero)
+                {
+                    Marshal.FreeHGlobal(output);
+                }
+                return null;
+            }
 
             return new AstcRaw(output, size);
         }
