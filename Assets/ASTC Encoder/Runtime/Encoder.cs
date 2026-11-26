@@ -98,7 +98,12 @@ namespace Aperture.Astcenc.Runtime
 
         private static CodecFlags GetFlags(TextureType textureType, GraphicsFormat graphicsFormat)
         {
-            CodecFlags flags = textureType == TextureType.Default ? CodecFlags.None : CodecFlags.MapNormal;
+            if (textureType == TextureType.Normal)
+            {
+                return CodecFlags.MapNormal;
+            }
+
+            CodecFlags flags = CodecFlags.None;
 
             switch (graphicsFormat)
             {
@@ -154,8 +159,24 @@ namespace Aperture.Astcenc.Runtime
             return flags;
         }
 
+        private static bool IsBgrFormat(GraphicsFormat graphicsFormat)
+        {
+            switch (graphicsFormat)
+            {
+                case GraphicsFormat.B8G8R8_UNorm:
+                case GraphicsFormat.B8G8R8_SRGB:
+                case GraphicsFormat.B8G8R8A8_UNorm:
+                case GraphicsFormat.B8G8R8A8_SRGB:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
         private static astcenc_swizzle GetSwizzle(GraphicsFormat graphicsFormat, TextureType textureType)
         {
+            bool isBgr = IsBgrFormat(graphicsFormat);
+
             if (textureType == TextureType.Normal)
             {
                 astcenc_swizzle swizzle = new astcenc_swizzle
@@ -163,39 +184,30 @@ namespace Aperture.Astcenc.Runtime
                     r = astcenc_swz.ASTCENC_SWZ_G,
                     g = astcenc_swz.ASTCENC_SWZ_G,
                     b = astcenc_swz.ASTCENC_SWZ_G,
-                    a = astcenc_swz.ASTCENC_SWZ_R,
+                    a = isBgr ? astcenc_swz.ASTCENC_SWZ_B : astcenc_swz.ASTCENC_SWZ_R,
                 };
                 return swizzle;
             }
 
-            switch (graphicsFormat)
+            if (isBgr)
             {
-                case GraphicsFormat.B8G8R8_UNorm:
-                case GraphicsFormat.B8G8R8_SRGB:
-                case GraphicsFormat.B8G8R8A8_UNorm:
-                case GraphicsFormat.B8G8R8A8_SRGB:
-                    {
-                        astcenc_swizzle swizzle = new astcenc_swizzle
-                        {
-                            r = astcenc_swz.ASTCENC_SWZ_B,
-                            g = astcenc_swz.ASTCENC_SWZ_G,
-                            b = astcenc_swz.ASTCENC_SWZ_R,
-                            a = astcenc_swz.ASTCENC_SWZ_A,
-                        };
-                        return swizzle;
-                    }
-                default:
-                    {
-                        astcenc_swizzle swizzle = new astcenc_swizzle
-                        {
-                            r = astcenc_swz.ASTCENC_SWZ_R,
-                            g = astcenc_swz.ASTCENC_SWZ_G,
-                            b = astcenc_swz.ASTCENC_SWZ_B,
-                            a = astcenc_swz.ASTCENC_SWZ_A,
-                        };
-                        return swizzle;
-                    }
+                astcenc_swizzle swizzle = new astcenc_swizzle
+                {
+                    r = astcenc_swz.ASTCENC_SWZ_B,
+                    g = astcenc_swz.ASTCENC_SWZ_G,
+                    b = astcenc_swz.ASTCENC_SWZ_R,
+                    a = astcenc_swz.ASTCENC_SWZ_A,
+                };
+                return swizzle;
             }
+
+            return new astcenc_swizzle
+            {
+                r = astcenc_swz.ASTCENC_SWZ_R,
+                g = astcenc_swz.ASTCENC_SWZ_G,
+                b = astcenc_swz.ASTCENC_SWZ_B,
+                a = astcenc_swz.ASTCENC_SWZ_A,
+            };
         }
 
         private static GraphicsFormat FitAstcGraphicsFormat(GraphicsFormat graphicsFormat, BlockSize blockSize)
