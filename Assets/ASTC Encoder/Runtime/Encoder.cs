@@ -335,8 +335,8 @@ namespace Aperture.Astcenc.Runtime
             int total = 0;
             for (int i = 0; i < mipCount; i++)
             {
-                int mipmapWidth = width / (1 << i);
-                int mipmapHeight = height / (1 << i);
+                int mipmapWidth = Math.Max(1, width >> i);
+                int mipmapHeight = Math.Max(1, height >> i);
                 int blockCountX = (mipmapWidth + (int)blockX - 1) / (int)blockX;
                 int blockCountY = (mipmapHeight + (int)blockY - 1) / (int)blockY;
                 int length = blockCountX * blockCountY * k_BytePerBlock;
@@ -353,8 +353,8 @@ namespace Aperture.Astcenc.Runtime
             {
                 for (int i = 0; i < mipCount; i++)
                 {
-                    int mipmapWidth = width / (1 << i);
-                    int mipmapHeight = height / (1 << i);
+                    int mipmapWidth = Math.Max(1, width >> i);
+                    int mipmapHeight = Math.Max(1, height >> i);
                     int blockCountX = (mipmapWidth + (int)blockX - 1) / (int)blockX;
                     int blockCountY = (mipmapHeight + (int)blockY - 1) / (int)blockY;
                     int length = blockCountX * blockCountY * k_BytePerBlock;
