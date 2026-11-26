@@ -95,7 +95,7 @@ namespace Aperture.Astcenc.Runtime
                 GraphicsFormat.R32G32_SFloat => astcenc_profile.ASTCENC_PRF_HDR,
                 GraphicsFormat.R32G32B32_SFloat => astcenc_profile.ASTCENC_PRF_HDR,
                 GraphicsFormat.R32G32B32A32_SFloat => astcenc_profile.ASTCENC_PRF_HDR,
-                _ => throw new NotSupportedException("GraphicsFormat is not support:"),
+                _ => throw new NotSupportedException($"GraphicsFormat is not supported: {graphicsFormat}"),
             };
         }
 
@@ -266,7 +266,7 @@ namespace Aperture.Astcenc.Runtime
                     }
                     break;
             }
-            throw new ArgumentException();
+            throw new ArgumentException($"Unsupported ASTC format mapping: GraphicsFormat={graphicsFormat}, BlockSize={blockSize}");
         }
 
         internal static bool IsSupportGraphicFormat(GraphicsFormat graphicsFormat)
@@ -835,6 +835,11 @@ namespace Aperture.Astcenc.Runtime
         /// <param name="raw">Astc raw data</param>
         public static void LoadRawTextureData(this Texture2D inputTexture, AstcRaw raw)
         {
+            if (inputTexture == null)
+            {
+                throw new ArgumentNullException(nameof(inputTexture));
+            }
+
             if (raw != null)
             {
                 raw.ThrowIfDisposed();
