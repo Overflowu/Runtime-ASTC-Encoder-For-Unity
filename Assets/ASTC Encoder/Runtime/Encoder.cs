@@ -132,6 +132,18 @@ namespace Aperture.Astcenc.Runtime
             throw new ArgumentException($"Unsupported ASTC format mapping: GraphicsFormat={graphicsFormat}, BlockSize={blockSize}");
         }
 
+        internal static bool CanCreateAstcTexture(GraphicsFormat format)
+        {
+            if (Application.isEditor)
+                return true;
+
+#if UNITY_2023_2_OR_NEWER
+            return SystemInfo.IsFormatSupported(format, GraphicsFormatUsage.Sample);
+#else
+            return SystemInfo.IsFormatSupported(format, FormatUsage.Sample);
+#endif
+        }
+
         public static bool IsGpuSupported => AstcGpuBackend.IsSupported;
 
         public static bool SupportsGpuDirectCopy(BlockSize blockSize, bool srgb = false, bool isHdr = false)

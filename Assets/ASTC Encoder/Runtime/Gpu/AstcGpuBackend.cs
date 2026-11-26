@@ -701,6 +701,11 @@ namespace Aperture.Astcenc.Runtime
             }
 
             GraphicsFormat astcFormat = ResolveTargetAstcFormat(source.graphicsFormat, textureType, blockSize, out _, out _);
+            if (!Encoder.CanCreateAstcTexture(astcFormat))
+            {
+                Debug.LogError($"ASTC texture format '{astcFormat}' is not supported on this device. Use CompressTexture or EncodeToASTC for raw ASTC data.");
+                return null;
+            }
             int mipCount = includeMipmaps ? Math.Max(1, source.mipmapCount) : 1;
 
             // Fast zero-readback path when all mip dimensions align cleanly and GPU natively samples ASTC
@@ -765,6 +770,11 @@ namespace Aperture.Astcenc.Runtime
             }
 
             GraphicsFormat astcFormat = ResolveTargetAstcFormat(inputTexture.graphicsFormat, textureType, blockSize, out _, out _);
+            if (!Encoder.CanCreateAstcTexture(astcFormat))
+            {
+                Debug.LogError($"ASTC texture format '{astcFormat}' is not supported on this device. Use CompressTexture or EncodeToASTC for raw ASTC data.");
+                return false;
+            }
             int width = inputTexture.width;
             int height = inputTexture.height;
             int mipCount = Math.Max(1, inputTexture.mipmapCount);

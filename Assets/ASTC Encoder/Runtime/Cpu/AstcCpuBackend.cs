@@ -742,13 +742,31 @@ namespace Aperture.Astcenc.Runtime
             bool includeMipmaps = true,
             bool useAlphaWeight = false)
         {
+            if (!IsSupported)
+            {
+                Debug.LogError("Native CPU ASTC compression library is not available on this platform.");
+                return null;
+            }
+
+            if (!IsInputSupported(inputTexture))
+            {
+                Debug.LogError("Texture format is not support or read/write is disabled.");
+                return null;
+            }
+
+            GraphicsFormat astcFormat = Encoder.FitAstcGraphicsFormat(inputTexture.graphicsFormat, blockSize, textureType);
+            if (!Encoder.CanCreateAstcTexture(astcFormat))
+            {
+                Debug.LogError($"ASTC texture format '{astcFormat}' is not supported on this device. Use CompressTexture or EncodeToASTC for raw ASTC data.");
+                return null;
+            }
+
             using AstcRaw raw = CompressTextureSync(inputTexture, textureType, blockSize, quality, threadCount: 0, includeMipmaps: includeMipmaps, useAlphaWeight: useAlphaWeight);
             if (raw == null)
             {
                 return null;
             }
 
-            GraphicsFormat astcFormat = Encoder.FitAstcGraphicsFormat(inputTexture.graphicsFormat, blockSize, textureType);
             int mipCount = includeMipmaps ? inputTexture.mipmapCount : 1;
             TextureCreationFlags flags = mipCount > 1 ? TextureCreationFlags.MipChain : TextureCreationFlags.None;
             var result = new Texture2D(inputTexture.width, inputTexture.height, astcFormat, mipCount, flags);
@@ -767,6 +785,25 @@ namespace Aperture.Astcenc.Runtime
             int threadCount = 1,
             bool useAlphaWeight = false)
         {
+            if (!IsSupported)
+            {
+                Debug.LogError("Native CPU ASTC compression library is not available on this platform.");
+                return false;
+            }
+
+            if (!IsInputSupported(inputTexture))
+            {
+                Debug.LogError("Texture format is not support or read/write is disabled.");
+                return false;
+            }
+
+            GraphicsFormat graphicsFormat = Encoder.FitAstcGraphicsFormat(inputTexture.graphicsFormat, blockSize, textureType);
+            if (!Encoder.CanCreateAstcTexture(graphicsFormat))
+            {
+                Debug.LogError($"ASTC texture format '{graphicsFormat}' is not supported on this device. Use CompressTexture or EncodeToASTC for raw ASTC data.");
+                return false;
+            }
+
             using AstcRaw raw = CompressTextureSync(inputTexture, textureType, blockSize, quality, threadCount: threadCount, includeMipmaps: true, useAlphaWeight: useAlphaWeight);
             if (raw == null)
             {
@@ -775,7 +812,6 @@ namespace Aperture.Astcenc.Runtime
 
             raw.ThrowIfDisposed();
 
-            GraphicsFormat graphicsFormat = Encoder.FitAstcGraphicsFormat(inputTexture.graphicsFormat, blockSize, textureType);
             if (inputTexture.Reinitialize(inputTexture.width, inputTexture.height, graphicsFormat, inputTexture.mipmapCount > 1))
             {
                 inputTexture.LoadRawTextureData(raw);
