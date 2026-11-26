@@ -27,6 +27,7 @@ namespace Aperture.Astcenc.Runtime
         internal uint BlockY { get; }
         internal astcenc_profile Profile { get; }
         internal CodecFlags Flags { get; }
+        internal bool IsDecompressOnly => (Flags & CodecFlags.DecompressOnly) != 0;
 
         private AstcContext(
             IntPtr context,
@@ -57,6 +58,7 @@ namespace Aperture.Astcenc.Runtime
         /// <summary>
         /// Creates a reusable ASTC compression context matching the given texture format and encoding settings.
         /// Pass threadCount &lt;= 0 to auto-select a sensible worker thread count based on CPU cores.
+        /// Optionally pass <paramref name="parentContext"/> with matching block dimensions to share read-only lookup tables (astcenc 5.x).
         /// </summary>
         public static AstcContext Create(
             GraphicsFormat graphicsFormat,
@@ -64,7 +66,10 @@ namespace Aperture.Astcenc.Runtime
             BlockSize blockSize,
             CompressQuality quality,
             int threadCount = 1,
-            bool useAlphaWeight = false)
+            bool useAlphaWeight = false,
+            bool usePerceptual = false,
+            uint alphaScaleRadius = 1u,
+            AstcContext parentContext = null)
         {
             if (!AstcCpuBackend.IsSupported)
             {
@@ -84,13 +89,25 @@ namespace Aperture.Astcenc.Runtime
                 return null;
             }
 
+            IntPtr parentPtr = IntPtr.Zero;
+            if (parentContext != null)
+            {
+                parentContext.ThrowIfDisposed();
+                if (parentContext.BlockX != blockX || parentContext.BlockY != blockY)
+                {
+                    Debug.LogError($"Parent AstcContext block size ({parentContext.BlockSize}) does not match requested block size ({blockSize}).");
+                    return null;
+                }
+                parentPtr = parentContext.m_Context;
+            }
+
             int resolvedThreads = threadCount <= 0
                 ? Math.Max(1, Math.Min(Environment.ProcessorCount, 4))
                 : threadCount;
 
             float qualityValue = AstcCpuBackend.GetQualityValue(quality);
             astcenc_profile profile = AstcCpuBackend.GetColorProfile(graphicsFormat, textureType);
-            CodecFlags flags = AstcCpuBackend.GetFlags(textureType, graphicsFormat, useAlphaWeight);
+            CodecFlags flags = AstcCpuBackend.GetFlags(textureType, graphicsFormat, useAlphaWeight, usePerceptual);
 
             astcenc_config config = new astcenc_config();
             astcenc_error status = astcenc_api.astcenc_config_init(profile, blockX, blockY, blockZ, qualityValue, (uint)flags, ref config);
@@ -102,11 +119,11 @@ namespace Aperture.Astcenc.Runtime
 
             if ((flags & CodecFlags.UseAlphaWeight) != 0)
             {
-                config.a_scale_radius = 1;
+                config.a_scale_radius = alphaScaleRadius;
             }
 
             IntPtr context = IntPtr.Zero;
-            status = astcenc_api.astcenc_context_alloc(ref config, (uint)resolvedThreads, ref context, IntPtr.Zero);
+            status = astcenc_api.astcenc_context_alloc(ref config, (uint)resolvedThreads, ref context, parentPtr);
             if (status != astcenc_error.ASTCENC_SUCCESS)
             {
                 Debug.LogError("Codec context alloc failed:" + status);
@@ -114,6 +131,56 @@ namespace Aperture.Astcenc.Runtime
             }
 
             return new AstcContext(context, profile, blockSize, blockX, blockY, quality, flags, resolvedThreads);
+        }
+
+        /// <summary>
+        /// Creates a lightweight decompression-only ASTC context for CPU decoding via ARM astc-encoder.
+        /// </summary>
+        public static AstcContext CreateDecompressor(
+            BlockSize blockSize,
+            bool srgb = false,
+            bool isHdr = false,
+            int threadCount = 1)
+        {
+            if (!AstcCpuBackend.IsSupported)
+            {
+                Debug.LogError("Native CPU ASTC library is not available on this platform.");
+                return null;
+            }
+
+            if (!Encoder.GetBlockSize(blockSize, out uint blockX, out uint blockY, out uint blockZ))
+            {
+                Debug.LogError("Unsupported ASTC block size: " + blockSize);
+                return null;
+            }
+
+            int resolvedThreads = threadCount <= 0
+                ? Math.Max(1, Math.Min(Environment.ProcessorCount, 4))
+                : threadCount;
+
+            astcenc_profile profile = isHdr
+                ? astcenc_profile.ASTCENC_PRF_HDR
+                : (srgb ? astcenc_profile.ASTCENC_PRF_LDR_SRGB : astcenc_profile.ASTCENC_PRF_LDR);
+
+            CodecFlags flags = CodecFlags.DecompressOnly;
+
+            astcenc_config config = new astcenc_config();
+            astcenc_error status = astcenc_api.astcenc_config_init(profile, blockX, blockY, blockZ, 0.0f, (uint)flags, ref config);
+            if (status != astcenc_error.ASTCENC_SUCCESS)
+            {
+                Debug.LogError("Decompress codec config init failed:" + status);
+                return null;
+            }
+
+            IntPtr context = IntPtr.Zero;
+            status = astcenc_api.astcenc_context_alloc(ref config, (uint)resolvedThreads, ref context, IntPtr.Zero);
+            if (status != astcenc_error.ASTCENC_SUCCESS)
+            {
+                Debug.LogError("Decompress codec context alloc failed:" + status);
+                return null;
+            }
+
+            return new AstcContext(context, profile, blockSize, blockX, blockY, CompressQuality.Fastest, flags, resolvedThreads);
         }
 
         public void ThrowIfDisposed()
@@ -143,9 +210,68 @@ namespace Aperture.Astcenc.Runtime
 
         internal bool IsCompatibleWith(GraphicsFormat graphicsFormat, TextureType textureType)
         {
+            if (IsDecompressOnly)
+                return false;
+
             bool isNormalContext = (Flags & CodecFlags.MapNormal) != 0;
             return AstcCpuBackend.GetColorProfile(graphicsFormat, textureType) == Profile
                 && isNormalContext == (textureType == TextureType.Normal);
+        }
+
+        internal astcenc_error DecompressSingleImage(IntPtr compressedData, int compressedLength, ref astcenc_image imageOut, ref astcenc_swizzle swizzle)
+        {
+            lock (m_SyncLock)
+            {
+                ThrowIfDisposed();
+
+                astcenc_error status;
+                try
+                {
+                    if (ThreadCount == 1 || compressedLength <= k_ParallelMinOutputBytes)
+                    {
+                        status = astcenc_api.astcenc_decompress_image(
+                            m_Context,
+                            compressedData,
+                            new UIntPtr((uint)compressedLength),
+                            ref imageOut,
+                            ref swizzle,
+                            0);
+                    }
+                    else
+                    {
+                        astcenc_image imageCopy = imageOut;
+                        astcenc_swizzle swizzleCopy = swizzle;
+                        UIntPtr dataLen = new UIntPtr((uint)compressedLength);
+                        int firstError = (int)astcenc_error.ASTCENC_SUCCESS;
+
+                        Parallel.For(0, ThreadCount, threadIndex =>
+                        {
+                            astcenc_image localImage = imageCopy;
+                            astcenc_swizzle localSwizzle = swizzleCopy;
+                            astcenc_error threadStatus = astcenc_api.astcenc_decompress_image(
+                                m_Context,
+                                compressedData,
+                                dataLen,
+                                ref localImage,
+                                ref localSwizzle,
+                                (uint)threadIndex);
+
+                            if (threadStatus != astcenc_error.ASTCENC_SUCCESS)
+                            {
+                                Interlocked.CompareExchange(ref firstError, (int)threadStatus, (int)astcenc_error.ASTCENC_SUCCESS);
+                            }
+                        });
+
+                        status = (astcenc_error)firstError;
+                    }
+                }
+                finally
+                {
+                    astcenc_api.astcenc_decompress_reset(m_Context);
+                }
+
+                return status;
+            }
         }
 
         internal astcenc_error CompressSingleImage(ref astcenc_image image, ref astcenc_swizzle swizzle, IntPtr output, int outputLength, CancellationToken cancellationToken = default)
