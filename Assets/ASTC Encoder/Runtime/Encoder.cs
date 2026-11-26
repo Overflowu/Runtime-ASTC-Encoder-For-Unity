@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Unity.Collections;
 using UnityEngine;
 using UnityEngine.Experimental.Rendering;
+using Aperture.Astcenc.Runtime.NativeAPI;
 
 namespace Aperture.Astcenc.Runtime
 {

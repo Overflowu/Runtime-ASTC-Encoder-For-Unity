@@ -2,6 +2,7 @@ using System;
 using System.Runtime.InteropServices;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
+using Aperture.Astcenc.Runtime.NativeAPI;
 
 namespace Aperture.Astcenc.Runtime
 {

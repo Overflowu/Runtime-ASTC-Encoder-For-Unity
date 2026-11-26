@@ -1,6 +1,8 @@
 using System;
 using System.Runtime.InteropServices;
 
+namespace Aperture.Astcenc.Runtime.NativeAPI
+{
 public static class astcenc_api
 {
 #if UNITY_ANDROID && !UNITY_EDITOR
@@ -389,4 +391,5 @@ public static class astcenc_api
     public static void astcenc_context_free(
         IntPtr context) { }
 #endif
+}
 }

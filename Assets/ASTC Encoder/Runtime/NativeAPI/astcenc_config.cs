@@ -1,6 +1,8 @@
 using System;
 using System.Runtime.InteropServices;
 
+namespace Aperture.Astcenc.Runtime.NativeAPI
+{
 /**
  * @brief The config structure.
  *
@@ -175,4 +177,5 @@ public struct astcenc_config
 	 * @brief The progress callback function pointer, can be IntPtr.Zero.
 	 */
 	public IntPtr progress_callback;
+}
 }
