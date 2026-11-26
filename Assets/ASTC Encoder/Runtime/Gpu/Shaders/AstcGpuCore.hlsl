@@ -35,14 +35,51 @@ struct AstcCandidate
     float4 e1_p1;
 };
 
+// On-chip per-thread packed RGBA8 pixel cache for small blocks (4x4, 5x5, 6x6 => 16..36 uints).
+// Eliminates redundant texture loads and sRGB pow() conversions across multi-pass candidate search
+// while keeping VGPR usage bounded for larger 8x8..12x12 blocks.
+#if (BLOCK_X * BLOCK_Y) <= 36
+#define ASTC_ENABLE_PIXEL_CACHE 1
+static uint g_AstcPackedBlock[BLOCK_X * BLOCK_Y];
+static uint g_AstcBlockCacheValid;
+
+uint AstcPackRgba8(float r255, float g255, float b255, float a255)
+{
+    uint r = (uint)clamp(floor(r255 + 0.5), 0.0, 255.0);
+    uint g = (uint)clamp(floor(g255 + 0.5), 0.0, 255.0);
+    uint b = (uint)clamp(floor(b255 + 0.5), 0.0, 255.0);
+    uint a = (uint)clamp(floor(a255 + 0.5), 0.0, 255.0);
+    return r | (g << 8u) | (b << 16u) | (a << 24u);
+}
+#else
+#define ASTC_ENABLE_PIXEL_CACHE 0
+#endif
+
 // Fetches one texel in the encoder's working space for the current effective mode.
 float4 AstcFetchWorkingPixel(uint baseX, uint baseY, uint x, uint y, uint effMode, out float impWeight)
 {
+    impWeight = 1.0;
+
+#if ASTC_ENABLE_PIXEL_CACHE
+    if (g_AstcBlockCacheValid != 0u)
+    {
+        uint packed = g_AstcPackedBlock[y * BLOCK_X + x];
+        float4 cached = float4(
+            (float)(packed & 0xFFu),
+            (float)((packed >> 8u) & 0xFFu),
+            (float)((packed >> 16u) & 0xFFu),
+            (float)((packed >> 24u) & 0xFFu));
+        if (effMode == ASTC_EFF_LDR_RGBA && _AstcUseAlphaWeight != 0u)
+        {
+            impWeight = max(cached.a * (1.0 / 255.0), 0.02);
+        }
+        return cached;
+    }
+#endif
+
     uint px = min(baseX + x, _AstcSrcWidth - 1u);
     uint py = min(baseY + y, _AstcSrcHeight - 1u);
     float4 raw = _AstcSourceTex.Load(int3(px, py, _AstcMipLevel));
-
-    impWeight = 1.0;
 
     if (effMode == ASTC_EFF_LDR_NORMAL)
     {
@@ -1501,6 +1538,9 @@ uint4 AstcEncodeBlock(uint blockXIdx, uint blockYIdx)
     uint baseY = blockYIdx * BLOCK_Y;
 
     bool isHdr = (_AstcMode == ASTC_MODE_HDR_RGB || _AstcMode == ASTC_MODE_HDR_RGBA);
+#if ASTC_ENABLE_PIXEL_CACHE
+    g_AstcBlockCacheValid = 0u;
+#endif
 
     // ------------------------------------------------------------------------
     // Step 1: Scan raw block stats (Void-Extent check + HDR alpha mode resolution)
@@ -1526,6 +1566,23 @@ uint4 AstcEncodeBlock(uint blockXIdx, uint blockYIdx)
                     (r.b > 0.0) ? min(r.b, 65504.0) : 0.0,
                     (r.a > 0.0) ? min(r.a, 65504.0) : 0.0);
             }
+#if ASTC_ENABLE_PIXEL_CACHE
+            else
+            {
+                if (_AstcMode == ASTC_MODE_LDR_NORMAL)
+                {
+                    float nr = (_AstcIsSRGB != 0u) ? AstcLinearToSRGBScalar(r.r) : saturate(r.r);
+                    float ng = (_AstcIsSRGB != 0u) ? AstcLinearToSRGBScalar(r.g) : saturate(r.g);
+                    g_AstcPackedBlock[y * BLOCK_X + x] = AstcPackRgba8(ng * 255.0, 0.0, 0.0, nr * 255.0);
+                }
+                else
+                {
+                    float3 rgb = (_AstcIsSRGB != 0u) ? AstcLinearToSRGB(r.rgb) : saturate(r.rgb);
+                    float a = (_AstcMode == ASTC_MODE_LDR_RGB) ? 1.0 : saturate(r.a);
+                    g_AstcPackedBlock[y * BLOCK_X + x] = AstcPackRgba8(rgb.r * 255.0, rgb.g * 255.0, rgb.b * 255.0, a * 255.0);
+                }
+            }
+#endif
             if (x == 0u && y == 0u) rawFirst = r;
             rawMin = min(rawMin, r);
             rawMax = max(rawMax, r);
@@ -1623,6 +1680,10 @@ uint4 AstcEncodeBlock(uint blockXIdx, uint blockYIdx)
             return AstcEncodeVoidExtentHDR(f16);
         }
     }
+
+#if ASTC_ENABLE_PIXEL_CACHE
+    g_AstcBlockCacheValid = (!isHdr) ? 1u : 0u;
+#endif
 
     // ------------------------------------------------------------------------
     // Step 3: Normal Map Dedicated Dual-Plane Path (GGGR -> CEM 4 LA + CCS=3)
