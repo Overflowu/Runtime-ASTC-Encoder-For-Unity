@@ -17,7 +17,7 @@ namespace Aperture.Astcenc.Runtime
 
         private readonly object m_SyncLock = new object();
         private IntPtr m_Context;
-        private bool m_Disposed;
+        private int m_Disposed;
 
         public BlockSize BlockSize { get; }
         public CompressQuality Quality { get; }
@@ -46,7 +46,7 @@ namespace Aperture.Astcenc.Runtime
             Quality = quality;
             Flags = flags;
             ThreadCount = threadCount;
-            m_Disposed = false;
+            m_Disposed = 0;
         }
 
         ~AstcContext()
@@ -118,7 +118,7 @@ namespace Aperture.Astcenc.Runtime
 
         public void ThrowIfDisposed()
         {
-            if (m_Disposed)
+            if (Volatile.Read(ref m_Disposed) != 0)
                 throw new ObjectDisposedException(GetType().FullName);
         }
 
@@ -222,14 +222,13 @@ namespace Aperture.Astcenc.Runtime
 
         private void FreeNativeContext()
         {
-            if (!m_Disposed)
+            if (Interlocked.Exchange(ref m_Disposed, 1) == 0)
             {
-                if (m_Context != IntPtr.Zero)
+                IntPtr context = Interlocked.Exchange(ref m_Context, IntPtr.Zero);
+                if (context != IntPtr.Zero)
                 {
-                    astcenc_api.astcenc_context_free(m_Context);
-                    m_Context = IntPtr.Zero;
+                    astcenc_api.astcenc_context_free(context);
                 }
-                m_Disposed = true;
             }
         }
 
