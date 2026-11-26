@@ -31,13 +31,15 @@ public static class astcenc_api
     private static extern astcenc_error astcenc_context_alloc_neon(
         ref astcenc_config config,
         uint thread_count,
-        ref IntPtr context);
+        ref IntPtr context,
+        IntPtr parent_context);
 
     [DllImport(NoneLibraryName, EntryPoint = "astcenc_context_alloc", CallingConvention = CallingConvention.Cdecl)]
     private static extern astcenc_error astcenc_context_alloc_none(
         ref astcenc_config config,
         uint thread_count,
-        ref IntPtr context);
+        ref IntPtr context,
+        IntPtr parent_context);
 
     [DllImport(NeonLibraryName, EntryPoint = "astcenc_compress_image", CallingConvention = CallingConvention.Cdecl)]
     private static extern astcenc_error astcenc_compress_image_neon(
@@ -63,6 +65,14 @@ public static class astcenc_api
 
     [DllImport(NoneLibraryName, EntryPoint = "astcenc_compress_reset", CallingConvention = CallingConvention.Cdecl)]
     private static extern astcenc_error astcenc_compress_reset_none(
+        IntPtr context);
+
+    [DllImport(NeonLibraryName, EntryPoint = "astcenc_compress_cancel", CallingConvention = CallingConvention.Cdecl)]
+    private static extern astcenc_error astcenc_compress_cancel_neon(
+        IntPtr context);
+
+    [DllImport(NoneLibraryName, EntryPoint = "astcenc_compress_cancel", CallingConvention = CallingConvention.Cdecl)]
+    private static extern astcenc_error astcenc_compress_cancel_none(
         IntPtr context);
 
     [DllImport(NeonLibraryName, EntryPoint = "astcenc_context_free", CallingConvention = CallingConvention.Cdecl)]
@@ -118,20 +128,22 @@ public static class astcenc_api
      * decompress-only library build the @c ASTCENC_FLG_DECOMPRESS_ONLY flag must be set when creating
      * any context.
      *
-     * @param[in]  config         Codec config.
-     * @param      thread_count   Thread count to configure for.
-     * @param[out] context        Location to store an opaque context pointer.
+     * @param[in]  config           Codec config.
+     * @param      thread_count     Thread count to configure for.
+     * @param[out] context          Location to store an opaque context pointer.
+     * @param[in]  parent_context   Optional parent context from which to inherit read-only data tables, or IntPtr.Zero.
      *
      * @return @c ASTCENC_SUCCESS on success, or an error if context creation failed.
      */
     public static astcenc_error astcenc_context_alloc(
         ref astcenc_config config,
         uint thread_count,
-        ref IntPtr context)
+        ref IntPtr context,
+        IntPtr parent_context)
     {
         return IntPtr.Size == 8
-            ? astcenc_context_alloc_neon(ref config, thread_count, ref context)
-            : astcenc_context_alloc_none(ref config, thread_count, ref context);
+            ? astcenc_context_alloc_neon(ref config, thread_count, ref context, parent_context)
+            : astcenc_context_alloc_none(ref config, thread_count, ref context, parent_context);
     }
 
     /**
@@ -184,6 +196,21 @@ public static class astcenc_api
         return IntPtr.Size == 8
             ? astcenc_compress_reset_neon(context)
             : astcenc_compress_reset_none(context);
+    }
+
+    /**
+     * @brief Cancel any pending compression operation.
+     *
+     * @param context   Codec context.
+     *
+     * @return @c ASTCENC_SUCCESS on success, or an error if cancellation failed.
+     */
+    public static astcenc_error astcenc_compress_cancel(
+        IntPtr context)
+    {
+        return IntPtr.Size == 8
+            ? astcenc_compress_cancel_neon(context)
+            : astcenc_compress_cancel_none(context);
     }
 
     /**
@@ -253,9 +280,10 @@ public static class astcenc_api
      * decompress-only library build the @c ASTCENC_FLG_DECOMPRESS_ONLY flag must be set when creating
      * any context.
      *
-     * @param[in]  config         Codec config.
-     * @param      thread_count   Thread count to configure for.
-     * @param[out] context        Location to store an opaque context pointer.
+     * @param[in]  config           Codec config.
+     * @param      thread_count     Thread count to configure for.
+     * @param[out] context          Location to store an opaque context pointer.
+     * @param[in]  parent_context   Optional parent context from which to inherit read-only data tables, or IntPtr.Zero.
      *
      * @return @c ASTCENC_SUCCESS on success, or an error if context creation failed.
      */
@@ -263,7 +291,8 @@ public static class astcenc_api
     public static extern astcenc_error astcenc_context_alloc(
         ref astcenc_config config, 
         uint thread_count, 
-        ref IntPtr context);
+        ref IntPtr context,
+        IntPtr parent_context);
 
     /**
      * @brief Compress an image.
@@ -309,6 +338,17 @@ public static class astcenc_api
         IntPtr context);
 
     /**
+     * @brief Cancel any pending compression operation.
+     *
+     * @param context   Codec context.
+     *
+     * @return @c ASTCENC_SUCCESS on success, or an error if cancellation failed.
+     */
+    [DllImport(LibraryName, EntryPoint = "astcenc_compress_cancel", CallingConvention = CallingConvention.Cdecl)]
+    public static extern astcenc_error astcenc_compress_cancel(
+        IntPtr context);
+
+    /**
      * Free the compressor context.
      *
      * @param context   The codec context.
@@ -329,7 +369,8 @@ public static class astcenc_api
     public static astcenc_error astcenc_context_alloc(
         ref astcenc_config config,
         uint thread_count,
-        ref IntPtr context) => astcenc_error.ASTCENC_ERR_NOT_IMPLEMENTED;
+        ref IntPtr context,
+        IntPtr parent_context) => astcenc_error.ASTCENC_ERR_NOT_IMPLEMENTED;
 
     public static astcenc_error astcenc_compress_image(
         IntPtr context,
@@ -340,6 +381,9 @@ public static class astcenc_api
         uint thread_index) => astcenc_error.ASTCENC_ERR_NOT_IMPLEMENTED;
 
     public static astcenc_error astcenc_compress_reset(
+        IntPtr context) => astcenc_error.ASTCENC_ERR_NOT_IMPLEMENTED;
+
+    public static astcenc_error astcenc_compress_cancel(
         IntPtr context) => astcenc_error.ASTCENC_ERR_NOT_IMPLEMENTED;
 
     public static void astcenc_context_free(

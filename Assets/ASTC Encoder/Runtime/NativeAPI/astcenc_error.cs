@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @brief A codec API error code.
  */
 public enum astcenc_error
@@ -25,4 +25,6 @@ public enum astcenc_error
 	ASTCENC_ERR_BAD_CONTEXT,
 	/** @brief The call failed due to unimplemented functionality. */
 	ASTCENC_ERR_NOT_IMPLEMENTED,
+	/** @brief The call failed due to an out-of-spec decode mode flag set. */
+	ASTCENC_ERR_BAD_DECODE_MODE,
 }
