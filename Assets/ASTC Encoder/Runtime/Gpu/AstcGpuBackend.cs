@@ -91,10 +91,12 @@ namespace Aperture.Astcenc.Runtime
             if (format == GraphicsFormat.None)
                 return false;
 
-            // _AstcSourceTex is bound as Texture2D<float4>; depth/stencil/integer formats cannot be loaded as float4.
+            // _AstcSourceTex is bound as Texture2D<float4>; depth/stencil/integer formats cannot be loaded as float4,
+            // and signed normalized (SNorm) formats would have negative values silently clamped to 0 by UNorm ASTC.
             if (GraphicsFormatUtility.IsDepthFormat(format)
                 || GraphicsFormatUtility.IsStencilFormat(format)
-                || GraphicsFormatUtility.IsIntegerFormat(format))
+                || GraphicsFormatUtility.IsIntegerFormat(format)
+                || (!GraphicsFormatUtility.IsFloatFormat(format) && GraphicsFormatUtility.IsSignedFormat(format)))
             {
                 return false;
             }
