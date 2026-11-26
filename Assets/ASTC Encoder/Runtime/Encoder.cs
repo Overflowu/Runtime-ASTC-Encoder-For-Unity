@@ -691,12 +691,11 @@ namespace Aperture.Astcenc.Runtime
             return new AstcRaw(output, size);
         }
 
-        internal static Task<AstcRaw> CompressTextureWithContextAsync(Texture2D inputTexture, AstcContext context, TextureType textureType, bool includeMipmaps, bool disposeContextOnComplete)
+        internal static Task<AstcRaw> CompressTextureWithContextAsync(Texture2D inputTexture, AstcContext context, TextureType textureType, bool includeMipmaps)
         {
             if (!IsSupport(inputTexture))
             {
                 Debug.LogError("Texture format is not support or read/write is disabled.");
-                if (disposeContextOnComplete) context?.Dispose();
                 return Task.FromResult<AstcRaw>(null);
             }
 
@@ -711,7 +710,6 @@ namespace Aperture.Astcenc.Runtime
             if (!context.IsCompatibleWith(inputTexture.graphicsFormat, textureType))
             {
                 Debug.LogError("AstcContext profile or flags do not match the input texture format and type.");
-                if (disposeContextOnComplete) context.Dispose();
                 return Task.FromResult<AstcRaw>(null);
             }
 
@@ -726,13 +724,11 @@ namespace Aperture.Astcenc.Runtime
             catch (Exception ex)
             {
                 Debug.LogError("Failed to snapshot texture mipmaps for async compression: " + ex.Message);
-                if (disposeContextOnComplete) context.Dispose();
                 return Task.FromResult<AstcRaw>(null);
             }
 
             if (snapshots == null)
             {
-                if (disposeContextOnComplete) context.Dispose();
                 return Task.FromResult<AstcRaw>(null);
             }
 
@@ -745,10 +741,6 @@ namespace Aperture.Astcenc.Runtime
                 finally
                 {
                     ReleaseSnapshots(snapshots);
-                    if (disposeContextOnComplete)
-                    {
-                        context.Dispose();
-                    }
                 }
             });
         }
@@ -780,7 +772,7 @@ namespace Aperture.Astcenc.Runtime
         }
 
         /// <summary>
-        /// Captures pixel data on the calling (main) thread and compresses asynchronously on background thread(s).
+        /// Captures pixel data on the calling (main) thread and creates context + compresses asynchronously on background thread(s).
         /// You should call Dispose() on the returned AstcRaw after use.
         /// </summary>
         /// <param name="inputTexture">Input texture must be uncompressed format and readable</param>
@@ -797,13 +789,49 @@ namespace Aperture.Astcenc.Runtime
                 return Task.FromResult<AstcRaw>(null);
             }
 
-            AstcContext context = AstcContext.Create(inputTexture.graphicsFormat, textureType, blockSize, quality, threadCount);
-            if (context == null)
+            if (!GetBlockSize(blockSize, out _, out _, out _))
+            {
+                Debug.LogError("Unsupported ASTC block size: " + blockSize);
+                return Task.FromResult<AstcRaw>(null);
+            }
+
+            GraphicsFormat graphicsFormat = inputTexture.graphicsFormat;
+            astcenc_swizzle swizzle = GetSwizzle(graphicsFormat, textureType);
+            int mipCount = inputTexture.mipmapCount;
+
+            astcenc_image[] snapshots;
+            try
+            {
+                snapshots = SnapshotTextureMipmaps(inputTexture, mipCount);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError("Failed to snapshot texture mipmaps for async compression: " + ex.Message);
+                return Task.FromResult<AstcRaw>(null);
+            }
+
+            if (snapshots == null)
             {
                 return Task.FromResult<AstcRaw>(null);
             }
 
-            return CompressTextureWithContextAsync(inputTexture, context, textureType, true, disposeContextOnComplete: true);
+            return Task.Run(() =>
+            {
+                try
+                {
+                    using AstcContext context = AstcContext.Create(graphicsFormat, textureType, blockSize, quality, threadCount);
+                    if (context == null)
+                    {
+                        return null;
+                    }
+
+                    return CompressSnapshots(context, swizzle, snapshots);
+                }
+                finally
+                {
+                    ReleaseSnapshots(snapshots);
+                }
+            });
         }
 
         /// <summary>

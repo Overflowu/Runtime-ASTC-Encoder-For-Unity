@@ -125,7 +125,7 @@ namespace Aperture.Astcenc.Runtime
         public Task<AstcRaw> CompressTextureAsync(Texture2D inputTexture, TextureType textureType = TextureType.Default)
         {
             ThrowIfDisposed();
-            return Encoder.CompressTextureWithContextAsync(inputTexture, this, textureType, true, disposeContextOnComplete: false);
+            return Encoder.CompressTextureWithContextAsync(inputTexture, this, textureType, true);
         }
 
         internal bool IsCompatibleWith(GraphicsFormat graphicsFormat, TextureType textureType)
