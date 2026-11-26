@@ -39,7 +39,8 @@ namespace Aperture.Astcenc.Runtime
         private static bool s_ShaderLoadAttempted;
         private static int[] s_TexKernels;
         private static int[] s_BufKernels;
-        private static RenderTexture s_CachedBlockRT;
+
+        private static readonly int s_PropTempBlocksRT = Shader.PropertyToID("_AstcTempBlocksRT");
 
         private static bool IsLoadStoreSupported(GraphicsFormat format)
         {
@@ -252,35 +253,15 @@ namespace Aperture.Astcenc.Runtime
             return true;
         }
 
-        private static RenderTexture GetOrCreateBlockRT(int blockW, int blockH)
+        private static RenderTextureDescriptor CreateBlockRTDescriptor(int blockW, int blockH)
         {
-            if (s_CachedBlockRT != null && s_CachedBlockRT.IsCreated()
-                && s_CachedBlockRT.width >= blockW && s_CachedBlockRT.height >= blockH)
+            return new RenderTextureDescriptor(blockW, blockH, GraphicsFormat.R32G32B32A32_UInt, 0)
             {
-                return s_CachedBlockRT;
-            }
-
-            int allocW = s_CachedBlockRT != null ? Math.Max(s_CachedBlockRT.width, blockW) : blockW;
-            int allocH = s_CachedBlockRT != null ? Math.Max(s_CachedBlockRT.height, blockH) : blockH;
-
-            if (s_CachedBlockRT != null)
-            {
-                s_CachedBlockRT.Release();
-                UnityEngine.Object.DestroyImmediate(s_CachedBlockRT);
-                s_CachedBlockRT = null;
-            }
-
-            var rt = new RenderTexture(allocW, allocH, 0, GraphicsFormat.R32G32B32A32_UInt)
-            {
-                name = "AstcGpuEncoder_TempBlocks",
                 enableRandomWrite = true,
                 useMipMap = false,
                 autoGenerateMips = false,
-                hideFlags = HideFlags.HideAndDontSave,
+                msaaSamples = 1,
             };
-            rt.Create();
-            s_CachedBlockRT = rt;
-            return rt;
         }
 
         internal static void Preload(BlockSize blockSize)
@@ -293,9 +274,11 @@ namespace Aperture.Astcenc.Runtime
                 return;
 
             var dummySrc = new Texture2D(4, 4, GraphicsFormat.R8G8B8A8_UNorm, TextureCreationFlags.None);
+            RenderTexture rt = null;
             try
             {
-                RenderTexture rt = GetOrCreateBlockRT(1, 1);
+                rt = RenderTexture.GetTemporary(CreateBlockRTDescriptor(1, 1));
+                rt.Create();
                 int texKernel = s_TexKernels[slot];
                 s_Shader.SetTexture(texKernel, s_PropSourceTex, dummySrc);
                 s_Shader.SetTexture(texKernel, s_PropDestTex, rt);
@@ -304,18 +287,23 @@ namespace Aperture.Astcenc.Runtime
             }
             finally
             {
+                if (rt != null)
+                    RenderTexture.ReleaseTemporary(rt);
                 UnityEngine.Object.DestroyImmediate(dummySrc);
             }
         }
 
+        /// <summary>
+        /// Drops the cached ComputeShader / kernel references so they are reloaded on next use.
+        /// Temporary block render targets are pooled per call (RenderTexture.GetTemporary / CommandBuffer.GetTemporaryRT),
+        /// so there is no long-lived GPU memory held by this backend.
+        /// </summary>
         internal static void ReleaseCache()
         {
-            if (s_CachedBlockRT != null)
-            {
-                s_CachedBlockRT.Release();
-                UnityEngine.Object.DestroyImmediate(s_CachedBlockRT);
-                s_CachedBlockRT = null;
-            }
+            s_Shader = null;
+            s_ShaderLoadAttempted = false;
+            s_TexKernels = null;
+            s_BufKernels = null;
         }
 
         private static void SetCommonUniforms(
@@ -616,7 +604,9 @@ namespace Aperture.Astcenc.Runtime
             uint qualityTier = MapQualityTier(quality);
             int kernel = s_TexKernels[slot];
 
-            RenderTexture tempRT = GetOrCreateBlockRT(blockCountX, blockCountY);
+            // Temp RT lifetime is owned by the CommandBuffer, so it stays valid however late the buffer executes.
+            var tempRT = new RenderTargetIdentifier(s_PropTempBlocksRT);
+            cmd.GetTemporaryRT(s_PropTempBlocksRT, CreateBlockRTDescriptor(blockCountX, blockCountY), FilterMode.Point);
 
             cmd.SetComputeTextureParam(s_Shader, kernel, s_PropSourceTex, source);
             cmd.SetComputeTextureParam(s_Shader, kernel, s_PropDestTex, tempRT);
@@ -627,6 +617,7 @@ namespace Aperture.Astcenc.Runtime
             cmd.DispatchCompute(s_Shader, kernel, groupsX, groupsY, 1);
 
             cmd.CopyTexture(tempRT, 0, 0, 0, 0, blockCountX, blockCountY, destination, 0, destMip, destX, destY);
+            cmd.ReleaseTemporaryRT(s_PropTempBlocksRT);
         }
 
         internal static Texture2D CompressToTexture(

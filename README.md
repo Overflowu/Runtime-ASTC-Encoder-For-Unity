@@ -18,7 +18,7 @@
   - 复用 CPU 编码上下文批量压缩（`AstcContext`）
   - 同步 / 异步导出符合标准容器规范的 `.astc` 字节数组（`EncodeToASTC` / `EncodeToASTCAsync`，仅编码 Mip 0）
 - **高性能低 GC 设计**：
-  - **GPU 后端**：纯整数 ALU BISE 编码与量化（零大常量查找表，规避 Android HLSLcc / 移动 GPU 寄存器溢出）、Void-Extent 纯色块零损快速路径、Normal 贴图专用 `CEM 4` + Dual-Plane、RGBA Dual-Plane 与 High 档位 2-Partition 搜索、内置临时 RT 缓存池与 `PreloadGpu` / `ReleaseGpuCache` 接口。
+  - **GPU 后端**：纯整数 ALU BISE 编码与量化（零大常量查找表，规避 Android HLSLcc / 移动 GPU 寄存器溢出）、Void-Extent 纯色块零损快速路径、Normal 贴图专用 `CEM 4` + Dual-Plane、RGBA Dual-Plane 与 High 档位 2-Partition 搜索、CommandBuffer 托管的临时 RT（延迟执行安全）与 `PreloadGpu` / `ReleaseGpuCache` 接口。
   - **CPU 后端**：对 `RGBA8` / `RGBA16F` / `RGBA32F` 四通道格式走**零拷贝直传**（`NativeSlice` 指针直接传递，异步模式下采用原生 `MemCpy` 快照），其余格式无堆分配转换，支持多核并行与 `CancellationToken` 取消。
 - **丰富的输入格式与完整 Mipmap 支持**：
   - 支持 24 种未压缩 `GraphicsFormat`（GPU 后端亦支持 `B10G11R11_UFloatPack32` 等 2D `RenderTexture`），涵盖 **LDR（8-bit UNorm / sRGB、16-bit UNorm）** 与 **HDR（16-bit / 32-bit Float）**。
@@ -231,7 +231,7 @@ public void EncodeIntoAtlas(CommandBuffer cmd, Texture tileSrc, Texture2D astcAt
 | :--- | :--- |
 | `Encoder.IsGpuSupported` | 检测当前设备是否支持 GPU Compute Shader 与 `R32G32B32A32_UInt` 写入 |
 | `Encoder.SupportsGpuDirectCopy(blockSize, srgb, isHdr)` | 检测当前 GPU 是否支持零回读 `CopyTexture` 直出目标 ASTC 格式纹理 |
-| `Encoder.PreloadGpu(blockSize)` / `Encoder.ReleaseGpuCache()` | 预热 GPU Compute Shader（避免首帧编译卡顿）/ 释放临时 RT 缓存池 |
+| `Encoder.PreloadGpu(blockSize)` / `Encoder.ReleaseGpuCache()` | 预热 GPU Compute Shader（避免首帧编译卡顿）/ 释放缓存的 Compute Shader 引用（临时 RT 均按次从 Unity 池申请，无常驻显存） |
 | `Encoder.IsSupport(Texture texture, EncodeBackend backend = EncodeBackend.Auto)` | 检查纹理是否满足指定后端要求（默认 `Auto`；GPU 后端无需 `isReadable` 且支持 `RenderTexture`） |
 | `Texture.CompressToTexture(..., backend = EncodeBackend.Auto)` | 压缩任意 2D `Texture` / `RenderTexture` 并返回新的压缩 `Texture2D`（GPU 优先零回读拷贝） |
 | `Encoder.Encode(CommandBuffer cmd, source, destination, ...)` | 向 `CommandBuffer` 录制 GPU ASTC 编码与 `CopyTexture`（支持子区域与自定义 Mip） |
@@ -387,7 +387,7 @@ flowchart TD
 - **GPU 后端平台特性**：
   - 在支持 ASTC 硬件采样的 GPU（iOS/macOS Apple Silicon Metal、Android Vulkan/GLES 3.1+）上，`CompressToTexture` / `Compress` / `Encoder.Encode` 可直接生成压缩 `Texture2D`（尺寸与 BlockSize 对齐时走零回读 `CopyTexture`，非对齐尺寸或完整 Mip 尾级自动走 GPU Buffer 安全上传）。
   - 在不支持 ASTC 硬件采样的桌面 GPU（如 Windows D3D11/D3D12）上，GPU 后端仍可通过 `CompressTexture` / `CompressTextureAsync` / `EncodeToASTC` / `EncodeToASTCAsync` 高速生成原始 ASTC 数据或 `.astc` 文件；在 Unity Editor 中，`Compress` / `CompressToTexture` 也会自动走 GPU Buffer + `LoadRawTextureData` 回退路径并由 Editor 软件预览。
-  - 建议在启动或场景切换时调用 `Encoder.PreloadGpu(...)` 预热 Compute Shader，切换场景或不再使用时调用 `Encoder.ReleaseGpuCache()` 释放临时 RT 缓存。
+  - 建议在启动或场景切换时调用 `Encoder.PreloadGpu(...)` 预热 Compute Shader，切换场景或不再使用时调用 `Encoder.ReleaseGpuCache()` 释放缓存的 Compute Shader 引用。`Encoder.Encode(CommandBuffer, ...)` 使用 `CommandBuffer.GetTemporaryRT` 申请中间块纹理，命令缓冲可安全地延迟执行或多次复用。
 - **移动端性能建议**：高频/动态贴图推荐优先使用 `EncodeBackend.Gpu` 配合 `CompressQuality.Fast`；CPU 后端压缩大图建议使用 `CompressTextureAsync` 配合 `Fastest` / `Fast` 并复用 `AstcContext`。
 - **异步压缩上下文生命周期**：使用 `context.CompressTextureAsync(...)` 时，请确保在返回的 `Task<AstcRaw>` 完成前不要释放该 `AstcContext`。
 - **透明贴图加权**：对于带透明通道的 UI / Sprite / 植被贴图，建议传入 `useAlphaWeight: true`；对于 ORM / Mask 等通道打包贴图保持默认 `useAlphaWeight: false`。
