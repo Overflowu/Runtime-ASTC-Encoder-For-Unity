@@ -99,7 +99,7 @@ public static class astcenc_api
         ref astcenc_image image,
         ref astcenc_swizzle swizzle,
         IntPtr data_out,
-        [MarshalAs(UnmanagedType.SysInt)] int data_len,
+        UIntPtr data_len,
         uint thread_index);
     /**
      * @brief Reset the codec state for a new compression.

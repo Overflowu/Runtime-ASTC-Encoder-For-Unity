@@ -379,7 +379,7 @@ namespace Aperture.Astcenc.Runtime
                     {
                         image.LoadFrom(mipmapSlice, mipmapWidth, mipmapHeight, bitness);
 
-                        astcenc_error status = astcenc_api.astcenc_compress_image(context, ref image, ref swizzle, output + byteWrited, length, 0);
+                        astcenc_error status = astcenc_api.astcenc_compress_image(context, ref image, ref swizzle, output + byteWrited, new UIntPtr((uint)length), 0);
                         if (status != astcenc_error.ASTCENC_SUCCESS)
                         {
                             throw new Exception(status.ToString());
