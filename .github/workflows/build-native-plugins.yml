@@ -22,7 +22,7 @@ jobs:
     runs-on: windows-2022
     steps:
       - name: Checkout repository and astc-encoder submodule
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: true
 
@@ -58,7 +58,7 @@ jobs:
           }
 
       - name: Upload Windows x64 artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: plugin-windows-x64
           path: build-win-x64/Source/Release/astcenc-sse4.1-shared.dll
@@ -69,7 +69,7 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Checkout repository and astc-encoder submodule
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: true
 
@@ -98,7 +98,7 @@ jobs:
           nm -gU "$DYLIB" | grep "astcenc_config_init"
 
       - name: Upload macOS Universal artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: plugin-macos-universal
           path: build-macos/Source/libastcenc-shared.dylib
@@ -109,7 +109,7 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Checkout repository and astc-encoder submodule
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: true
 
@@ -139,7 +139,7 @@ jobs:
           nm -gU "$LIB" | grep "astcenc_config_init"
 
       - name: Upload iOS ARM64 artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: plugin-ios-arm64
           path: build-ios/Source/libastcenc-neon-static.a
@@ -162,7 +162,7 @@ jobs:
             output_name: libastcenc-none-shared.so
     steps:
       - name: Checkout repository and astc-encoder submodule
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: true
 
@@ -203,7 +203,7 @@ jobs:
           "$LLVM_BIN/llvm-nm" -D --defined-only "$SO" | grep "astcenc_config_init"
 
       - name: Upload Android ${{ matrix.abi }} artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: plugin-android-${{ matrix.abi }}
           path: build-android-${{ matrix.abi }}/Source/${{ matrix.output_name }}
@@ -221,13 +221,13 @@ jobs:
       contents: write
     steps:
       - name: Checkout repository (with LFS when committing)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: true
           lfs: ${{ github.event_name == 'workflow_dispatch' && inputs.commit_binaries }}
 
       - name: Download all platform artifacts into Unity Plugins layout
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: staging
 
@@ -253,7 +253,7 @@ jobs:
           find dist/Plugins -type f -exec ls -lh {} +
 
       - name: Upload combined Unity Plugins artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: astcenc-unity-plugins-${{ env.ASTCENC_VERSION }}
           path: dist/Plugins/
