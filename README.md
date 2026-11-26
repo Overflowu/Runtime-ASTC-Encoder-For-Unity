@@ -232,14 +232,14 @@ public void EncodeIntoAtlas(CommandBuffer cmd, Texture tileSrc, Texture2D astcAt
 | `Encoder.IsGpuSupported` | 检测当前设备是否支持 GPU Compute Shader 与 `R32G32B32A32_UInt` 写入 |
 | `Encoder.SupportsGpuDirectCopy(blockSize, srgb, isHdr)` | 检测当前 GPU 是否支持零回读 `CopyTexture` 直出目标 ASTC 格式纹理 |
 | `Encoder.PreloadGpu(blockSize)` / `Encoder.ReleaseGpuCache()` | 预热 GPU Compute Shader（避免首帧编译卡顿）/ 释放临时 RT 缓存池 |
-| `Encoder.IsSupport(Texture texture, [EncodeBackend backend])` | 检查纹理是否满足指定后端要求（GPU 后端无需 `isReadable` 且支持 `RenderTexture`） |
+| `Encoder.IsSupport(Texture texture, EncodeBackend backend = EncodeBackend.Auto)` | 检查纹理是否满足指定后端要求（默认 `Auto`；GPU 后端无需 `isReadable` 且支持 `RenderTexture`） |
 | `Texture.CompressToTexture(..., backend = EncodeBackend.Auto)` | 压缩任意 2D `Texture` / `RenderTexture` 并返回新的压缩 `Texture2D`（GPU 优先零回读拷贝） |
 | `Encoder.Encode(CommandBuffer cmd, source, destination, ...)` | 向 `CommandBuffer` 录制 GPU ASTC 编码与 `CopyTexture`（支持子区域与自定义 Mip） |
-| `Texture2D.Compress(..., backend = EncodeBackend.Cpu)` | 原地压缩 `Texture2D`（`Gpu` 后端无需 `isReadable`，对齐尺寸走零回读路径） |
-| `Texture2D.CompressTexture(..., backend = EncodeBackend.Cpu)` / `RenderTexture.CompressTexture(...)` | 同步压缩全部 Mipmap 至非托管内存，返回 `AstcRaw`（需 `Dispose()`） |
-| `Texture2D.CompressTextureAsync(..., backend = EncodeBackend.Cpu)` / `RenderTexture.CompressTextureAsync(...)` | 异步压缩（CPU 后台多线程 / GPU `AsyncGPUReadback`），均支持 `CancellationToken` |
+| `Texture2D.Compress(..., backend = EncodeBackend.Auto)` | 原地压缩 `Texture2D`（默认 `Auto`；GPU 后端无需 `isReadable`，对齐尺寸走零回读路径） |
+| `Texture2D.CompressTexture(..., backend = EncodeBackend.Auto)` / `RenderTexture.CompressTexture(...)` | 同步压缩全部 Mipmap 至非托管内存，返回 `AstcRaw`（需 `Dispose()`） |
+| `Texture2D.CompressTextureAsync(..., backend = EncodeBackend.Auto)` / `RenderTexture.CompressTextureAsync(...)` | 异步压缩（默认 `Auto`；GPU `AsyncGPUReadback` / CPU 后台多线程），均支持 `CancellationToken` |
 | `Texture2D.LoadRawTextureData(AstcRaw raw)` | 将 `AstcRaw` 中的压缩数据直接加载到目标 `Texture2D` |
-| `Texture2D.EncodeToASTC(..., backend = EncodeBackend.Cpu)` / `Texture.EncodeToASTCAsync(..., backend = EncodeBackend.Auto)` | 仅压缩 Mip 0 并写入 16 字节标准 `.astc` 文件头，返回托管 `byte[]`（PC 无 ASTC 采样硬件时亦可走 GPU 高速导出） |
+| `Texture2D.EncodeToASTC(..., backend = EncodeBackend.Auto)` / `Texture.EncodeToASTCAsync(..., backend = EncodeBackend.Auto)` | 仅压缩 Mip 0 并写入 16 字节标准 `.astc` 文件头，返回托管 `byte[]`（PC 无 ASTC 采样硬件时亦可走 GPU 高速导出） |
 
 ### `AstcContext`（可复用原生 CPU 编码上下文）
 
@@ -384,7 +384,7 @@ flowchart TD
 - **非托管内存管理**：直接调用 `CompressTexture` / `CompressTextureAsync` 返回的 `AstcRaw` 持有非托管内存，以及手动创建的 `AstcContext` 均需通过 `using` 或 `Dispose()` 及时释放。
 - **GPU 后端平台特性**：
   - 在支持 ASTC 硬件采样的 GPU（iOS/macOS Apple Silicon Metal、Android Vulkan/GLES 3.1+）上，`CompressToTexture` / `Compress` / `Encoder.Encode` 可直接生成压缩 `Texture2D`（尺寸与 BlockSize 对齐时走零回读 `CopyTexture`，非对齐尺寸或完整 Mip 尾级自动走 GPU Buffer 安全上传）。
-  - 在不支持 ASTC 硬件采样的桌面 GPU（如 Windows D3D11/D3D12）上，仍可使用 GPU 后端通过 `CompressTextureAsync` / `EncodeToASTC` / `EncodeToASTCAsync` 高速生成原始 ASTC 数据或 `.astc` 文件。
+  - 在不支持 ASTC 硬件采样的桌面 GPU（如 Windows D3D11/D3D12）上，GPU 后端仍可通过 `CompressTexture` / `CompressTextureAsync` / `EncodeToASTC` / `EncodeToASTCAsync` 高速生成原始 ASTC 数据或 `.astc` 文件；在 Unity Editor 中，`Compress` / `CompressToTexture` 也会自动走 GPU Buffer + `LoadRawTextureData` 回退路径并由 Editor 软件预览。
   - 建议在启动或场景切换时调用 `Encoder.PreloadGpu(...)` 预热 Compute Shader，切换场景或不再使用时调用 `Encoder.ReleaseGpuCache()` 释放临时 RT 缓存。
 - **移动端性能建议**：高频/动态贴图推荐优先使用 `EncodeBackend.Gpu` 配合 `CompressQuality.Fast`；CPU 后端压缩大图建议使用 `CompressTextureAsync` 配合 `Fastest` / `Fast` 并复用 `AstcContext`。
 - **异步压缩上下文生命周期**：使用 `context.CompressTextureAsync(...)` 时，请确保在返回的 `Task<AstcRaw>` 完成前不要释放该 `AstcContext`。

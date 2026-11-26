@@ -643,15 +643,9 @@ namespace Aperture.Astcenc.Runtime
             }
 
             GraphicsFormat astcFormat = ResolveTargetAstcFormat(source.graphicsFormat, blockSize, out _, out _);
-            if (!IsSampleSupported(astcFormat))
-            {
-                Debug.LogError($"Current GPU does not support sampling compressed format {astcFormat}. Use CompressTextureAsync / EncodeToASTCAsync to read back raw ASTC bytes on non-ASTC GPUs.");
-                return null;
-            }
-
             int mipCount = includeMipmaps ? Math.Max(1, source.mipmapCount) : 1;
 
-            // Fast zero-readback path when all mip dimensions align cleanly for Graphics.CopyTexture
+            // Fast zero-readback path when all mip dimensions align cleanly and GPU natively samples ASTC
             if (CanUseDirectCopy(source.width, source.height, mipCount, blockSize, astcFormat))
             {
                 TextureCreationFlags flags = TextureCreationFlags.DontInitializePixels | TextureCreationFlags.DontUploadUponCreate;
@@ -679,7 +673,7 @@ namespace Aperture.Astcenc.Runtime
                 return dst;
             }
 
-            // Universal GPU fallback for non-aligned dimensions (e.g. 1024x1024 ASTC_6x6) or full 1x1 mip tails
+            // Universal GPU path for non-aligned dimensions, full 1x1 mip tails, or non-ASTC desktop Editors (Unity software preview)
             using AstcRaw raw = CompressTextureSync(source, textureType, blockSize, quality, includeMipmaps, useAlphaWeight);
             if (raw == null)
                 return null;
@@ -713,12 +707,6 @@ namespace Aperture.Astcenc.Runtime
             }
 
             GraphicsFormat astcFormat = ResolveTargetAstcFormat(inputTexture.graphicsFormat, blockSize, out _, out _);
-            if (!IsSampleSupported(astcFormat))
-            {
-                Debug.LogError($"Current GPU does not support sampling compressed format {astcFormat}.");
-                return false;
-            }
-
             int width = inputTexture.width;
             int height = inputTexture.height;
             int mipCount = Math.Max(1, inputTexture.mipmapCount);

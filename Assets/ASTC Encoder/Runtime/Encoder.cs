@@ -328,18 +328,18 @@ namespace Aperture.Astcenc.Runtime
             AstcGpuBackend.ReleaseCache();
         }
 
-        public static bool IsSupport(Texture texture)
+        private static bool IsCpuSupported(Texture texture)
         {
-            return texture != null && texture.isReadable && IsSupportGraphicFormat(texture.graphicsFormat);
+            return texture is Texture2D && texture.isReadable && IsSupportGraphicFormat(texture.graphicsFormat);
         }
 
-        public static bool IsSupport(Texture texture, EncodeBackend backend)
+        public static bool IsSupport(Texture texture, EncodeBackend backend = EncodeBackend.Auto)
         {
             return backend switch
             {
-                EncodeBackend.Cpu => IsSupport(texture),
+                EncodeBackend.Cpu => IsCpuSupported(texture),
                 EncodeBackend.Gpu => AstcGpuBackend.IsSupported && AstcGpuBackend.IsInputSupported(texture),
-                EncodeBackend.Auto => (AstcGpuBackend.IsSupported && AstcGpuBackend.IsInputSupported(texture)) || IsSupport(texture),
+                EncodeBackend.Auto => (AstcGpuBackend.IsSupported && AstcGpuBackend.IsInputSupported(texture)) || IsCpuSupported(texture),
                 _ => false,
             };
         }
@@ -673,7 +673,7 @@ namespace Aperture.Astcenc.Runtime
 
         internal static AstcRaw CompressTextureWithContext(Texture2D inputTexture, AstcContext context, TextureType textureType, bool includeMipmaps)
         {
-            if (!IsSupport(inputTexture))
+            if (!IsCpuSupported(inputTexture))
             {
                 Debug.LogError("Texture format is not support or read/write is disabled.");
                 return null;
@@ -716,7 +716,7 @@ namespace Aperture.Astcenc.Runtime
                 return Task.FromCanceled<AstcRaw>(cancellationToken);
             }
 
-            if (!IsSupport(inputTexture))
+            if (!IsCpuSupported(inputTexture))
             {
                 Debug.LogError("Texture format is not support or read/write is disabled.");
                 return Task.FromResult<AstcRaw>(null);
@@ -778,16 +778,16 @@ namespace Aperture.Astcenc.Runtime
         /// <param name="quality">Compress quality setting</param>
         /// <param name="threadCount">Worker thread count for CPU backend (1 = single-threaded, &lt;= 0 = auto)</param>
         /// <param name="useAlphaWeight">Enable alpha-weighted RGB error optimization (only for transparent textures; leave false for channel-packed maps)</param>
-        /// <param name="backend">Execution backend (Cpu, Gpu, or Auto)</param>
+        /// <param name="backend">Execution backend (Auto prefers GPU with CPU fallback)</param>
         /// <returns>CompressedData</returns>
-        public static AstcRaw CompressTexture(this Texture2D inputTexture, TextureType textureType, BlockSize blockSize, CompressQuality quality, int threadCount = 1, bool useAlphaWeight = false, EncodeBackend backend = EncodeBackend.Cpu)
+        public static AstcRaw CompressTexture(this Texture2D inputTexture, TextureType textureType, BlockSize blockSize, CompressQuality quality, int threadCount = 1, bool useAlphaWeight = false, EncodeBackend backend = EncodeBackend.Auto)
         {
             if (ShouldUseGpu(inputTexture, backend))
             {
                 return AstcGpuBackend.CompressTextureSync(inputTexture, textureType, blockSize, quality, includeMipmaps: true, useAlphaWeight: useAlphaWeight);
             }
 
-            if (!IsSupport(inputTexture))
+            if (!IsCpuSupported(inputTexture))
             {
                 Debug.LogError("Texture format is not support or read/write is disabled.");
                 return null;
@@ -811,7 +811,7 @@ namespace Aperture.Astcenc.Runtime
         }
 
         /// <summary>
-        /// Compresses a Texture2D asynchronously on CPU background thread(s) or via GPU AsyncGPUReadback depending on backend.
+        /// Compresses a Texture2D asynchronously on GPU AsyncGPUReadback or CPU background thread(s) depending on backend.
         /// You should call Dispose() on the returned AstcRaw after use.
         /// </summary>
         /// <param name="inputTexture">Input texture (CPU backend requires readable Texture2D; GPU backend supports non-readable Texture2D)</param>
@@ -821,9 +821,9 @@ namespace Aperture.Astcenc.Runtime
         /// <param name="threadCount">Worker thread count for CPU backend (&lt;= 0 = auto based on CPU cores)</param>
         /// <param name="useAlphaWeight">Enable alpha-weighted RGB error optimization (only for transparent textures; leave false for channel-packed maps)</param>
         /// <param name="cancellationToken">Optional cancellation token</param>
-        /// <param name="backend">Execution backend (Cpu, Gpu, or Auto)</param>
+        /// <param name="backend">Execution backend (Auto prefers GPU with CPU fallback)</param>
         /// <returns>Task yielding compressed AstcRaw data or null on failure</returns>
-        public static Task<AstcRaw> CompressTextureAsync(this Texture2D inputTexture, TextureType textureType = TextureType.Default, BlockSize blockSize = BlockSize.ASTC_6x6, CompressQuality quality = CompressQuality.Fast, int threadCount = 0, bool useAlphaWeight = false, CancellationToken cancellationToken = default, EncodeBackend backend = EncodeBackend.Cpu)
+        public static Task<AstcRaw> CompressTextureAsync(this Texture2D inputTexture, TextureType textureType = TextureType.Default, BlockSize blockSize = BlockSize.ASTC_6x6, CompressQuality quality = CompressQuality.Fast, int threadCount = 0, bool useAlphaWeight = false, CancellationToken cancellationToken = default, EncodeBackend backend = EncodeBackend.Auto)
         {
             if (cancellationToken.IsCancellationRequested)
             {
@@ -835,7 +835,7 @@ namespace Aperture.Astcenc.Runtime
                 return AstcGpuBackend.CompressTextureAsync(inputTexture, textureType, blockSize, quality, includeMipmaps: true, useAlphaWeight: useAlphaWeight, cancellationToken: cancellationToken);
             }
 
-            if (!IsSupport(inputTexture))
+            if (!IsCpuSupported(inputTexture))
             {
                 Debug.LogError("Texture format is not support or read/write is disabled.");
                 return Task.FromResult<AstcRaw>(null);
@@ -926,9 +926,9 @@ namespace Aperture.Astcenc.Runtime
         /// <param name="makeNoLongerReadable">When set to true, Unity discards the copy of pixel data in CPU-addressable memory after this operation.</param>
         /// <param name="threadCount">Worker thread count for CPU backend (1 = single-threaded, &lt;= 0 = auto)</param>
         /// <param name="useAlphaWeight">Enable alpha-weighted RGB error optimization (only for transparent textures; leave false for channel-packed maps)</param>
-        /// <param name="backend">Execution backend (Cpu, Gpu, or Auto)</param>
+        /// <param name="backend">Execution backend (Auto prefers GPU with CPU fallback)</param>
         /// <returns>Success or not</returns>
-        public static bool Compress(this Texture2D inputTexture, TextureType textureType = TextureType.Default, BlockSize blockSize = BlockSize.ASTC_6x6, CompressQuality quality = CompressQuality.Fast, bool makeNoLongerReadable = true, int threadCount = 1, bool useAlphaWeight = false, EncodeBackend backend = EncodeBackend.Cpu)
+        public static bool Compress(this Texture2D inputTexture, TextureType textureType = TextureType.Default, BlockSize blockSize = BlockSize.ASTC_6x6, CompressQuality quality = CompressQuality.Fast, bool makeNoLongerReadable = true, int threadCount = 1, bool useAlphaWeight = false, EncodeBackend backend = EncodeBackend.Auto)
         {
             if (ShouldUseGpu(inputTexture, backend))
             {
@@ -980,7 +980,7 @@ namespace Aperture.Astcenc.Runtime
 
             if (source is Texture2D tex2d)
             {
-                if (!IsSupport(tex2d))
+                if (!IsCpuSupported(tex2d))
                 {
                     Debug.LogError("Texture format is not support or read/write is disabled.");
                     return null;
@@ -1041,9 +1041,9 @@ namespace Aperture.Astcenc.Runtime
         /// <param name="quality">Compress quality setting</param>
         /// <param name="threadCount">Worker thread count for CPU backend (1 = single-threaded, &lt;= 0 = auto)</param>
         /// <param name="useAlphaWeight">Enable alpha-weighted RGB error optimization (only for transparent textures)</param>
-        /// <param name="backend">Execution backend (Cpu, Gpu, or Auto)</param>
+        /// <param name="backend">Execution backend (Auto prefers GPU with CPU fallback)</param>
         /// <returns>.astc file bytes or null on failure</returns>
-        public static byte[] EncodeToASTC(this Texture2D inputTexture, TextureType textureType = TextureType.Default, BlockSize blockSize = BlockSize.ASTC_6x6, CompressQuality quality = CompressQuality.Medium, int threadCount = 1, bool useAlphaWeight = false, EncodeBackend backend = EncodeBackend.Cpu)
+        public static byte[] EncodeToASTC(this Texture2D inputTexture, TextureType textureType = TextureType.Default, BlockSize blockSize = BlockSize.ASTC_6x6, CompressQuality quality = CompressQuality.Medium, int threadCount = 1, bool useAlphaWeight = false, EncodeBackend backend = EncodeBackend.Auto)
         {
             if (inputTexture == null)
             {
@@ -1058,7 +1058,7 @@ namespace Aperture.Astcenc.Runtime
             }
             else
             {
-                if (!IsSupport(inputTexture))
+                if (!IsCpuSupported(inputTexture))
                 {
                     Debug.LogError("Texture format is not support or read/write is disabled.");
                     return null;
@@ -1115,7 +1115,7 @@ namespace Aperture.Astcenc.Runtime
             }
             else if (inputTexture is Texture2D tex2d)
             {
-                if (!IsSupport(tex2d))
+                if (!IsCpuSupported(tex2d))
                 {
                     Debug.LogError("Texture format is not support or read/write is disabled.");
                     return null;
