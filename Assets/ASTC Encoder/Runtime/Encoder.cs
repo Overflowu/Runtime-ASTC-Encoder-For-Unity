@@ -797,6 +797,72 @@ namespace Aperture.Astcenc.Runtime
             return AstcCpuBackend.DecompressAstcFileToTexture(astcFileBytes, srgb, isHdr, threadCount, makeNoLongerReadable);
         }
 
+        /// <summary>
+        /// Encodes any 2D Texture (including optional mipmaps) into a standard Khronos KTX v1 container byte array.
+        /// Unlike <see cref="EncodeToASTC(Texture, AstcCompressOptions)"/>, KTX v1 preserves full mipmap chains and exact sRGB/HDR metadata.
+        /// </summary>
+        public static byte[] EncodeToKTX(this Texture inputTexture, AstcCompressOptions options)
+        {
+            if (inputTexture == null)
+            {
+                Debug.LogError("Input texture is null.");
+                return null;
+            }
+
+            int width = inputTexture.width;
+            int height = inputTexture.height;
+            GraphicsFormat targetFormat = GetTargetAstcFormat(inputTexture.graphicsFormat, options.BlockSize, options.TextureType);
+
+            using AstcRaw raw = inputTexture.CompressTexture(options);
+            if (raw == null)
+                return null;
+
+            int mipCount = AstcKtxContainer.InferMipCount(raw.Length, width, height, options.BlockSize);
+            if (mipCount <= 0)
+                return null;
+
+            return AstcKtxContainer.Encode(raw, width, height, mipCount, targetFormat);
+        }
+
+        /// <summary>
+        /// Asynchronously encodes any 2D Texture (including optional mipmaps) into a standard Khronos KTX v1 container byte array.
+        /// </summary>
+        public static async Task<byte[]> EncodeToKTXAsync(this Texture inputTexture, AstcCompressOptions options, CancellationToken cancellationToken = default)
+        {
+            if (cancellationToken.IsCancellationRequested)
+                throw new OperationCanceledException(cancellationToken);
+
+            if (inputTexture == null)
+            {
+                Debug.LogError("Input texture is null.");
+                return null;
+            }
+
+            int width = inputTexture.width;
+            int height = inputTexture.height;
+            GraphicsFormat targetFormat = GetTargetAstcFormat(inputTexture.graphicsFormat, options.BlockSize, options.TextureType);
+
+            using AstcRaw raw = await inputTexture.CompressTextureAsync(options, cancellationToken);
+            if (raw == null)
+                return null;
+
+            cancellationToken.ThrowIfCancellationRequested();
+            int mipCount = AstcKtxContainer.InferMipCount(raw.Length, width, height, options.BlockSize);
+            if (mipCount <= 0)
+                return null;
+
+            return AstcKtxContainer.Encode(raw, width, height, mipCount, targetFormat);
+        }
+
+        /// <summary>
+        /// Loads a standard Khronos KTX v1 ASTC container into a GPU-ready <see cref="Texture2D"/> (with full mipmap chain).
+        /// Automatically falls back to CPU software decompression on devices without hardware ASTC support.
+        /// </summary>
+        public static Texture2D LoadFromKTX(byte[] ktxBytes, bool makeNoLongerReadable = true, string textureName = null)
+        {
+            return AstcKtxContainer.LoadTexture(ktxBytes, makeNoLongerReadable, textureName);
+        }
+
         private static byte[] BuildAstcFileBytes(AstcRaw raw, BlockSize blockSize, int width, int height)
         {
             if (raw == null)
