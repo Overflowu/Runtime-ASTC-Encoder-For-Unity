@@ -35,6 +35,17 @@ struct AstcCandidate
     float4 e1_p1;
 };
 
+#if BLOCK_X <= 4
+#define ASTC_MAX_GRID   16
+#define ASTC_MAX_GRID_U 16u
+#elif BLOCK_X <= 5
+#define ASTC_MAX_GRID   25
+#define ASTC_MAX_GRID_U 25u
+#else
+#define ASTC_MAX_GRID   36
+#define ASTC_MAX_GRID_U 36u
+#endif
+
 // On-chip per-thread packed RGBA8 pixel cache for small blocks (4x4, 5x5, 6x6 => 16..36 uints).
 // Eliminates redundant texture loads and sRGB pow() conversions across multi-pass candidate search
 // while keeping VGPR usage bounded for larger 8x8..12x12 blocks.
@@ -528,12 +539,12 @@ void AstcComputeWeightGrid1P(
     uint excludedChannel,
     float4 e0, float4 e1,
     uint gridW, uint gridH,
-    out float gridW01[36])
+    out float gridW01[ASTC_MAX_GRID])
 {
     uint gridCount = gridW * gridH;
-    float num[36];
-    float den[36];
-    for (uint i = 0u; i < 36u; ++i)
+    float num[ASTC_MAX_GRID];
+    float den[ASTC_MAX_GRID];
+    for (uint i = 0u; i < ASTC_MAX_GRID_U; ++i)
     {
         gridW01[i] = 0.0;
         num[i] = 0.0;
@@ -596,12 +607,12 @@ void AstcComputePlane1WeightGrid(
     uint plane1Channel,
     float c0, float c1,
     uint gridW, uint gridH,
-    out float gridW01[36])
+    out float gridW01[ASTC_MAX_GRID])
 {
     uint gridCount = gridW * gridH;
-    float num[36];
-    float den[36];
-    for (uint i = 0u; i < 36u; ++i)
+    float num[ASTC_MAX_GRID];
+    float den[ASTC_MAX_GRID];
+    for (uint i = 0u; i < ASTC_MAX_GRID_U; ++i)
     {
         gridW01[i] = 0.0;
         num[i] = 0.0;
@@ -665,12 +676,12 @@ void AstcComputeWeightGrid2P(
     float4 e0_p0, float4 e1_p0,
     float4 e0_p1, float4 e1_p1,
     uint gridW, uint gridH,
-    out float gridW01[36])
+    out float gridW01[ASTC_MAX_GRID])
 {
     uint gridCount = gridW * gridH;
-    float num[36];
-    float den[36];
-    for (uint i = 0u; i < 36u; ++i)
+    float num[ASTC_MAX_GRID];
+    float den[ASTC_MAX_GRID];
+    for (uint i = 0u; i < ASTC_MAX_GRID_U; ++i)
     {
         gridW01[i] = 0.0;
         num[i] = 0.0;
@@ -744,19 +755,20 @@ float AstcEvalError1P(
     uint effMode,
     float4 e0, float4 e1,
     uint gridW, uint gridH,
-    uint wQuant, uint epQuant)
+    uint wQuant, uint epQuant,
+    float bestError)
 {
     uint epCodes[16];
     for (uint e = 0u; e < 16u; ++e) epCodes[e] = 0u;
     float4 uqE0, uqE1;
     AstcQuantizeEndpoints(e0, e1, effMode, epQuant, epCodes, 0u, uqE0, uqE1);
 
-    float gridW01[36];
+    float gridW01[ASTC_MAX_GRID];
     AstcComputeWeightGrid1P(baseX, baseY, effMode, 4u, uqE0, uqE1, gridW, gridH, gridW01);
 
-    uint gridUq[36];
+    uint gridUq[ASTC_MAX_GRID];
     uint gridCount = gridW * gridH;
-    for (uint i = 0u; i < 36u; ++i) gridUq[i] = 0u;
+    for (uint i = 0u; i < ASTC_MAX_GRID_U; ++i) gridUq[i] = 0u;
     for (uint k = 0u; k < gridCount; ++k)
     {
         uint uqW;
@@ -785,6 +797,8 @@ float AstcEvalError1P(
                 totalErr += dot(diff, diff);
             }
         }
+        if (totalErr >= bestError)
+            return totalErr;
     }
     return totalErr;
 }
@@ -801,12 +815,12 @@ uint AstcFindWorstChannel1P(
     float4 uqE0, uqE1;
     AstcQuantizeEndpoints(best1P.e0, best1P.e1, effMode, best1P.epQuant, epCodes, 0u, uqE0, uqE1);
 
-    float gridW01[36];
+    float gridW01[ASTC_MAX_GRID];
     AstcComputeWeightGrid1P(baseX, baseY, effMode, 4u, uqE0, uqE1, best1P.gridW, best1P.gridH, gridW01);
 
-    uint gridUq[36];
+    uint gridUq[ASTC_MAX_GRID];
     uint gridCount = best1P.gridW * best1P.gridH;
-    for (uint i = 0u; i < 36u; ++i) gridUq[i] = 0u;
+    for (uint i = 0u; i < ASTC_MAX_GRID_U; ++i) gridUq[i] = 0u;
     for (uint k = 0u; k < gridCount; ++k)
     {
         uint uqW;
@@ -846,22 +860,23 @@ float AstcEvalErrorDualPlane(
     uint ccs,
     float4 e0, float4 e1,
     uint gridW, uint gridH,
-    uint wQuant, uint epQuant)
+    uint wQuant, uint epQuant,
+    float bestError)
 {
     uint epCodes[16];
     for (uint e = 0u; e < 16u; ++e) epCodes[e] = 0u;
     float4 uqE0, uqE1;
     AstcQuantizeEndpoints(e0, e1, effMode, epQuant, epCodes, 0u, uqE0, uqE1);
 
-    float grid0W01[36];
-    float grid1W01[36];
+    float grid0W01[ASTC_MAX_GRID];
+    float grid1W01[ASTC_MAX_GRID];
     AstcComputeWeightGrid1P(baseX, baseY, effMode, ccs, uqE0, uqE1, gridW, gridH, grid0W01);
     AstcComputePlane1WeightGrid(baseX, baseY, effMode, ccs, AstcGetChannel(uqE0, ccs), AstcGetChannel(uqE1, ccs), gridW, gridH, grid1W01);
 
-    uint grid0Uq[36];
-    uint grid1Uq[36];
+    uint grid0Uq[ASTC_MAX_GRID];
+    uint grid1Uq[ASTC_MAX_GRID];
     uint gridCount = gridW * gridH;
-    for (uint i = 0u; i < 36u; ++i) { grid0Uq[i] = 0u; grid1Uq[i] = 0u; }
+    for (uint i = 0u; i < ASTC_MAX_GRID_U; ++i) { grid0Uq[i] = 0u; grid1Uq[i] = 0u; }
     for (uint k = 0u; k < gridCount; ++k)
     {
         uint uq0, uq1;
@@ -909,6 +924,8 @@ float AstcEvalErrorDualPlane(
                 }
             }
         }
+        if (totalErr >= bestError)
+            return totalErr;
     }
     return totalErr;
 }
@@ -921,7 +938,8 @@ float AstcEvalError2P(
     float4 e0_p0, float4 e1_p0,
     float4 e0_p1, float4 e1_p1,
     uint gridW, uint gridH,
-    uint wQuant, uint epQuant)
+    uint wQuant, uint epQuant,
+    float bestError)
 {
     uint epCodes[16];
     for (uint e = 0u; e < 16u; ++e) epCodes[e] = 0u;
@@ -930,12 +948,12 @@ float AstcEvalError2P(
     AstcQuantizeEndpoints(e0_p0, e1_p0, effMode, epQuant, epCodes, 0u, uq0_p0, uq1_p0);
     AstcQuantizeEndpoints(e0_p1, e1_p1, effMode, epQuant, epCodes, epPerPart, uq0_p1, uq1_p1);
 
-    float gridW01[36];
+    float gridW01[ASTC_MAX_GRID];
     AstcComputeWeightGrid2P(baseX, baseY, effMode, partSeed, uq0_p0, uq1_p0, uq0_p1, uq1_p1, gridW, gridH, gridW01);
 
-    uint gridUq[36];
+    uint gridUq[ASTC_MAX_GRID];
     uint gridCount = gridW * gridH;
-    for (uint i = 0u; i < 36u; ++i) gridUq[i] = 0u;
+    for (uint i = 0u; i < ASTC_MAX_GRID_U; ++i) gridUq[i] = 0u;
     for (uint k = 0u; k < gridCount; ++k)
     {
         uint uqW;
@@ -968,6 +986,8 @@ float AstcEvalError2P(
                 totalErr += dot(diff, diff);
             }
         }
+        if (totalErr >= bestError)
+            return totalErr;
     }
     return totalErr;
 }
@@ -979,7 +999,7 @@ void AstcRefitEndpoints1P(
     uint baseX, uint baseY,
     uint effMode,
     uint gridW, uint gridH,
-    uint gridUq[36],
+    uint gridUq[ASTC_MAX_GRID],
     uint epQuant,
     float4 curUqE0, float4 curUqE1,
     inout uint epCodes[16])
@@ -1077,8 +1097,8 @@ void AstcRefitEndpointsDualPlane(
     uint effMode,
     uint ccs,
     uint gridW, uint gridH,
-    uint grid0Uq[36],
-    uint grid1Uq[36],
+    uint grid0Uq[ASTC_MAX_GRID],
+    uint grid1Uq[ASTC_MAX_GRID],
     uint epQuant,
     float4 curUqE0, float4 curUqE1,
     inout uint epCodes[16])
@@ -1246,7 +1266,7 @@ uint4 AstcAssembleBlock(uint baseX, uint baseY, uint effMode, AstcCandidate c)
         AstcQuantizeEndpoints(c.e0, c.e1, effMode, c.epQuant, epCodes, 0u, uq0_p0, uq1_p0);
         AstcQuantizeEndpoints(c.e0_p1, c.e1_p1, effMode, c.epQuant, epCodes, epPerPart, uq0_p1, uq1_p1);
 
-        float gridW01[36];
+        float gridW01[ASTC_MAX_GRID];
         AstcComputeWeightGrid2P(baseX, baseY, effMode, c.partSeed, uq0_p0, uq1_p0, uq0_p1, uq1_p1, c.gridW, c.gridH, gridW01);
         for (uint k = 0u; k < gridCount; ++k)
         {
@@ -1261,15 +1281,15 @@ uint4 AstcAssembleBlock(uint baseX, uint baseY, uint effMode, AstcCandidate c)
         float4 uqE0, uqE1;
         AstcQuantizeEndpoints(c.e0, c.e1, effMode, c.epQuant, epCodes, 0u, uqE0, uqE1);
 
-        float grid0W01[36];
-        float grid1W01[36];
+        float grid0W01[ASTC_MAX_GRID];
+        float grid1W01[ASTC_MAX_GRID];
         AstcComputeWeightGrid1P(baseX, baseY, effMode, c.dualPlaneChannel, uqE0, uqE1, c.gridW, c.gridH, grid0W01);
         AstcComputePlane1WeightGrid(baseX, baseY, effMode, c.dualPlaneChannel, AstcGetChannel(uqE0, c.dualPlaneChannel), AstcGetChannel(uqE1, c.dualPlaneChannel), c.gridW, c.gridH, grid1W01);
 
 #if !defined(ASTC_FAST_ONLY)
-        uint grid0Uq[36];
-        uint grid1Uq[36];
-        for (uint zi = 0u; zi < 36u; ++zi) { grid0Uq[zi] = 0u; grid1Uq[zi] = 0u; }
+        uint grid0Uq[ASTC_MAX_GRID];
+        uint grid1Uq[ASTC_MAX_GRID];
+        for (uint zi = 0u; zi < ASTC_MAX_GRID_U; ++zi) { grid0Uq[zi] = 0u; grid1Uq[zi] = 0u; }
 #endif
         for (uint k = 0u; k < gridCount; ++k)
         {
@@ -1295,12 +1315,12 @@ uint4 AstcAssembleBlock(uint baseX, uint baseY, uint effMode, AstcCandidate c)
         float4 uqE0, uqE1;
         AstcQuantizeEndpoints(c.e0, c.e1, effMode, c.epQuant, epCodes, 0u, uqE0, uqE1);
 
-        float gridW01[36];
+        float gridW01[ASTC_MAX_GRID];
         AstcComputeWeightGrid1P(baseX, baseY, effMode, 4u, uqE0, uqE1, c.gridW, c.gridH, gridW01);
 
 #if !defined(ASTC_FAST_ONLY)
-        uint gridUq[36];
-        for (uint zi = 0u; zi < 36u; ++zi) gridUq[zi] = 0u;
+        uint gridUq[ASTC_MAX_GRID];
+        for (uint zi = 0u; zi < ASTC_MAX_GRID_U; ++zi) gridUq[zi] = 0u;
 #endif
         for (uint k = 0u; k < gridCount; ++k)
         {
@@ -1359,7 +1379,7 @@ void AstcTryCandidate1P(
     uint bm, uint gw, uint gh, uint wQ, uint epQ,
     inout AstcCandidate best)
 {
-    float err = AstcEvalError1P(baseX, baseY, effMode, e0, e1, gw, gh, wQ, epQ);
+    float err = AstcEvalError1P(baseX, baseY, effMode, e0, e1, gw, gh, wQ, epQ, best.error);
     if (err < best.error)
     {
         best.blockMode = bm;
@@ -1384,7 +1404,7 @@ void AstcTryCandidateDualPlane(
     uint bm, uint gw, uint gh, uint wQ, uint epQ,
     inout AstcCandidate best)
 {
-    float err = AstcEvalErrorDualPlane(baseX, baseY, effMode, ccs, e0, e1, gw, gh, wQ, epQ);
+    float err = AstcEvalErrorDualPlane(baseX, baseY, effMode, ccs, e0, e1, gw, gh, wQ, epQ, best.error);
     if (err < best.error)
     {
         best.blockMode = bm;
@@ -1410,7 +1430,7 @@ void AstcTryCandidate2P(
     uint bm, uint gw, uint gh, uint wQ, uint epQ,
     inout AstcCandidate best)
 {
-    float err = AstcEvalError2P(baseX, baseY, effMode, partSeed, e0_p0, e1_p0, e0_p1, e1_p1, gw, gh, wQ, epQ);
+    float err = AstcEvalError2P(baseX, baseY, effMode, partSeed, e0_p0, e1_p0, e0_p1, e1_p1, gw, gh, wQ, epQ, best.error);
     if (err < best.error)
     {
         best.blockMode = bm;
