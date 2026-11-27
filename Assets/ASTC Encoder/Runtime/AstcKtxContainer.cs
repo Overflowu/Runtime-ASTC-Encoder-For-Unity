@@ -186,7 +186,11 @@ namespace Aperture.Astcenc.Runtime
                 uint mipLevels = br.ReadUInt32();
                 uint kvBytes = br.ReadUInt32();
 
-                if (glType != 0 || glFormat != 0 || pixelWidth == 0 || pixelHeight == 0 || pixelDepth > 1 || arrayElements > 1 || faces != 1)
+                if (glType != 0 || glFormat != 0 || pixelWidth == 0 || pixelHeight == 0 || pixelWidth > 16384u || pixelHeight > 16384u || pixelDepth > 1 || arrayElements > 1 || faces != 1)
+                    return false;
+
+                int maxMips = AstcGpuBackend.CalculateFullMipCount((int)pixelWidth, (int)pixelHeight);
+                if (mipLevels > (uint)maxMips)
                     return false;
 
                 int mipCount = (int)Math.Max(1u, mipLevels);
@@ -196,11 +200,11 @@ namespace Aperture.Astcenc.Runtime
                 bool isHdr = false;
                 if (kvBytes > 0)
                 {
-                    long kvEnd = k_HeaderSize + kvBytes;
+                    long kvEnd = k_HeaderSize + (long)kvBytes;
                     while (ms.Position + 4 <= kvEnd)
                     {
                         uint entryLen = br.ReadUInt32();
-                        if (ms.Position + entryLen > kvEnd)
+                        if (ms.Position + (long)entryLen > kvEnd)
                             break;
 
                         if (entryLen == (uint)s_HdrKvEntry.Length)
@@ -234,36 +238,39 @@ namespace Aperture.Astcenc.Runtime
                 if (!Encoder.GetBlockSize(blockSize, out uint bx, out uint by, out _))
                     return false;
 
-                int totalPayloadBytes = 0;
+                long totalPayloadBytes = 0;
                 for (int mip = 0; mip < mipCount; mip++)
                 {
                     int mipW = Math.Max(1, (int)pixelWidth >> mip);
                     int mipH = Math.Max(1, (int)pixelHeight >> mip);
-                    int blocksX = (mipW + (int)bx - 1) / (int)bx;
-                    int blocksY = (mipH + (int)by - 1) / (int)by;
+                    long blocksX = (mipW + (long)bx - 1L) / (long)bx;
+                    long blocksY = (mipH + (long)by - 1L) / (long)by;
                     totalPayloadBytes += blocksX * blocksY * k_BytesPerBlock;
                 }
 
-                byte[] payload = new byte[totalPayloadBytes];
+                if (totalPayloadBytes <= 0 || totalPayloadBytes > ktxBytes.Length - ms.Position)
+                    return false;
+
+                byte[] payload = new byte[(int)totalPayloadBytes];
                 int dstOffset = 0;
                 for (int mip = 0; mip < mipCount; mip++)
                 {
                     if (ms.Position + 4 > ktxBytes.Length)
                         return false;
 
-                    int imageSize = (int)br.ReadUInt32();
+                    uint imageSize = br.ReadUInt32();
                     int mipW = Math.Max(1, (int)pixelWidth >> mip);
                     int mipH = Math.Max(1, (int)pixelHeight >> mip);
                     int expectedMipBytes = ((mipW + (int)bx - 1) / (int)bx) * ((mipH + (int)by - 1) / (int)by) * k_BytesPerBlock;
 
-                    if (imageSize < expectedMipBytes || ms.Position + imageSize > ktxBytes.Length)
+                    if (imageSize < (uint)expectedMipBytes || ms.Position + (long)imageSize > ktxBytes.Length)
                         return false;
 
                     Buffer.BlockCopy(ktxBytes, (int)ms.Position, payload, dstOffset, expectedMipBytes);
                     dstOffset += expectedMipBytes;
                     ms.Position += imageSize;
 
-                    int pad = (4 - (imageSize & 3)) & 3;
+                    long pad = (4 - (imageSize & 3)) & 3;
                     if (ms.Position + pad <= ktxBytes.Length)
                         ms.Position += pad;
                 }
@@ -305,9 +312,16 @@ namespace Aperture.Astcenc.Runtime
             }
 
             // Fallback on non-ASTC platforms: software-decompress mip 0 via native CPU library.
+            if (!Encoder.GetBlockSize(data.BlockSize, out uint bx, out uint by, out _))
+                return null;
+
+            int mip0Bytes = ((data.Width + (int)bx - 1) / (int)bx) * ((data.Height + (int)by - 1) / (int)by) * k_BytesPerBlock;
+            if (mip0Bytes > data.RawAstcPayload.Length)
+                return null;
+
             bool srgb = GraphicsFormatUtility.IsSRGBFormat(data.GraphicsFormat);
             bool isHdr = GraphicsFormatUtility.IsFloatFormat(data.GraphicsFormat);
-            byte[] rgba = AstcCpuBackend.DecompressToBytes(data.RawAstcPayload, 0, data.RawAstcPayload.Length, data.Width, data.Height, data.BlockSize, srgb, isHdr, isHdr ? 16 : 8);
+            byte[] rgba = AstcCpuBackend.DecompressToBytes(data.RawAstcPayload, 0, mip0Bytes, data.Width, data.Height, data.BlockSize, srgb, isHdr, isHdr ? 16 : 8);
             if (rgba == null)
                 return null;
 

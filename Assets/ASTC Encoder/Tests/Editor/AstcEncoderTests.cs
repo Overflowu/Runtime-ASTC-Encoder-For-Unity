@@ -97,6 +97,31 @@ namespace Aperture.Astcenc.Tests
         }
 
         [Test]
+        public void KtxContainer_RejectsMalformedAndOverflowHeaders()
+        {
+            // Craft a 64-byte KTX header with huge mipLevels / dimensions to ensure TryDecode returns false cleanly without OOM or overflow.
+            byte[] evil = new byte[64];
+            byte[] magic = { 0xAB, 0x4B, 0x54, 0x58, 0x20, 0x31, 0x31, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A };
+            Buffer.BlockCopy(magic, 0, evil, 0, magic.Length);
+            BitConverter.GetBytes(0x04030201u).CopyTo(evil, 12); // endianness
+            BitConverter.GetBytes(0x93B0u).CopyTo(evil, 28);     // GL_COMPRESSED_RGBA_ASTC_4x4_KHR
+            BitConverter.GetBytes(0x40000000u).CopyTo(evil, 36); // absurd width
+            BitConverter.GetBytes(0x40000000u).CopyTo(evil, 40); // absurd height
+            BitConverter.GetBytes(1u).CopyTo(evil, 52);          // faces
+            BitConverter.GetBytes(0x7FFFFFFFu).CopyTo(evil, 56); // absurd mipLevels
+            Assert.IsFalse(AstcKtxContainer.TryDecode(evil, out _));
+
+            // Valid dimensions but absurd mipLevels
+            BitConverter.GetBytes(64u).CopyTo(evil, 36);
+            BitConverter.GetBytes(64u).CopyTo(evil, 40);
+            Assert.IsFalse(AstcKtxContainer.TryDecode(evil, out _));
+
+            // Valid dimensions & mipLevels = 1, but truncated payload
+            BitConverter.GetBytes(1u).CopyTo(evil, 56);
+            Assert.IsFalse(AstcKtxContainer.TryDecode(evil, out _));
+        }
+
+        [Test]
         public void CompressRawPixels_CpuCrossDecode_MeetsQualityTarget()
         {
             if (!Encoder.IsCpuSupported)
