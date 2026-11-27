@@ -1314,9 +1314,9 @@ namespace Aperture.Astcenc.Runtime
             }
 
             long requiredBytes = (long)width * height * bpp;
-            if (pixelByteLength < requiredBytes)
+            if (requiredBytes <= 0 || requiredBytes > int.MaxValue || pixelByteLength < requiredBytes)
             {
-                Debug.LogError($"Raw pixel buffer ({pixelByteLength} bytes) is smaller than required ({requiredBytes} bytes) for {width}x{height} {sourceFormat}.");
+                Debug.LogError($"Raw pixel buffer ({pixelByteLength} bytes) is invalid or smaller than required ({requiredBytes} bytes) for {width}x{height} {sourceFormat}.");
                 return Task.FromResult<AstcRaw>(null);
             }
 
