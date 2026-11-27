@@ -1,11 +1,9 @@
 using System;
-using System.Diagnostics;
 using System.IO;
 using Aperture.Astcenc.Runtime;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Experimental.Rendering;
-using Debug = UnityEngine.Debug;
 
 namespace Aperture.Astcenc.Editor
 {
@@ -26,6 +24,10 @@ namespace Aperture.Astcenc.Editor
         {
             public string Label;
             public double EncodeMs;
+            public double MinMs;
+            public double P95Ms;
+            public double ThroughputMPixPerSec;
+            public long GcAllocBytesPerOp;
             public int CompressedBytes;
             public int UncompressedBytes;
             public double RgbPsnrDb;
@@ -59,6 +61,9 @@ namespace Aperture.Astcenc.Editor
         private bool m_UseAlphaWeight;
         private bool m_UsePerceptual;
         private bool m_GenerateMipmaps;
+        private bool m_ReuseCpuContext = true;
+        private int m_WarmupRuns = 2;
+        private int m_Iterations = 5;
         private BenchmarkMode m_Mode = BenchmarkMode.CompareCpuAndGpu;
         private float m_HeatmapGain = 10f;
         private bool m_ShowAlphaOnly;
@@ -112,6 +117,9 @@ namespace Aperture.Astcenc.Editor
                 m_UseAlphaWeight = EditorGUILayout.Toggle("Use Alpha Weight", m_UseAlphaWeight);
                 m_UsePerceptual = EditorGUILayout.Toggle("Perceptual (CPU)", m_UsePerceptual);
                 m_GenerateMipmaps = EditorGUILayout.Toggle("Generate Mipmaps (GPU)", m_GenerateMipmaps);
+                m_ReuseCpuContext = EditorGUILayout.Toggle("Reuse CPU Context (Warm)", m_ReuseCpuContext);
+                m_WarmupRuns = EditorGUILayout.IntSlider("Warmup Runs", m_WarmupRuns, 0, 10);
+                m_Iterations = EditorGUILayout.IntSlider("Benchmark Iterations", m_Iterations, 1, 30);
                 m_HeatmapGain = EditorGUILayout.Slider("Error Heatmap Gain", m_HeatmapGain, 1f, 32f);
                 m_ShowAlphaOnly = EditorGUILayout.Toggle("Preview Alpha Channel", m_ShowAlphaOnly);
             }
@@ -125,15 +133,26 @@ namespace Aperture.Astcenc.Editor
                 {
                     RunBenchmark();
                 }
-                if (GUILayout.Button("Export .ktx", GUILayout.Height(30f), GUILayout.Width(110f)))
+                if (GUILayout.Button("Export .ktx", GUILayout.Height(30f), GUILayout.Width(100f)))
                 {
                     ExportFile("ktx");
                 }
-                if (GUILayout.Button("Export .astc", GUILayout.Height(30f), GUILayout.Width(110f)))
+                if (GUILayout.Button("Export .astc", GUILayout.Height(30f), GUILayout.Width(100f)))
                 {
                     ExportFile("astc");
                 }
                 GUI.enabled = true;
+
+                if (GUILayout.Button("Run Full Suite", GUILayout.Height(30f), GUILayout.Width(120f)))
+                {
+                    AstcBenchmarkReport report = AstcPerformanceBenchmarkRunner.RunFullSuite(
+                        warmup: Math.Max(1, m_WarmupRuns),
+                        iterations: Math.Max(3, m_Iterations),
+                        exportReports: true,
+                        out string exportDir);
+                    m_StatusMessage = $"Full performance suite completed ({report.Results.Count} cases). Reports exported to: {exportDir}";
+                    Debug.Log($"{m_StatusMessage}\n{AstcPerformanceBenchmarkRunner.FormatMarkdownTable(report)}");
+                }
             }
 
             if (!string.IsNullOrEmpty(m_StatusMessage))
@@ -207,60 +226,113 @@ namespace Aperture.Astcenc.Editor
         {
             int width = readableSource.width;
             int height = readableSource.height;
+            bool gpuGenMips = backend == EncodeBackend.Gpu && m_GenerateMipmaps;
+            int threadCount = Math.Max(1, Environment.ProcessorCount / 2);
+
             var options = new AstcCompressOptions
             {
                 TextureType = m_TextureType,
                 BlockSize = m_BlockSize,
                 Quality = m_Quality,
-                IncludeMipmaps = false,
-                GenerateMipmaps = false,
+                IncludeMipmaps = gpuGenMips,
+                GenerateMipmaps = gpuGenMips,
                 UseAlphaWeight = m_UseAlphaWeight,
                 UsePerceptual = m_UsePerceptual,
-                ThreadCount = Math.Max(1, Environment.ProcessorCount / 2),
+                ThreadCount = threadCount,
                 Backend = backend
             };
 
-            var sw = Stopwatch.StartNew();
-            using AstcRaw raw = readableSource.CompressTexture(options);
-            sw.Stop();
+            long totalPixels = gpuGenMips
+                ? AstcPerformanceBenchmarkRunner.CalculateMipChainPixels(width, height)
+                : (long)width * height;
 
-            if (raw == null)
+            AstcRaw lastRaw = null;
+            AstcContext warmContext = null;
+            AstcBenchmarkMetrics timing;
+            try
             {
-                m_StatusMessage = $"{label} returned null (backend unsupported or failed).";
-                return null;
-            }
-
-            // Software-decode mip 0 via native astcenc so metrics & previews work on any PC/Mac Editor.
-            byte[] decodedRgba = Encoder.Decompress(raw, width, height, m_BlockSize, srgb: isSrgb, isHdr: isHdr, outputBitness: isHdr ? 32 : 8);
-            if (decodedRgba == null)
-            {
-                m_StatusMessage = $"{label} encoded in {sw.Elapsed.TotalMilliseconds:F2} ms, but CPU software decompression failed.";
-                return null;
-            }
-
-            Color[] decPixels = UnpackDecodedPixels(decodedRgba, width * height, isHdr);
-            if (m_TextureType == TextureType.Normal)
-            {
-                // ASTC Normal maps are encoded in GGGR layout (R/G/B = ny, A = nx); reconstruct tangent-space RGB for metrics & preview.
-                for (int i = 0; i < decPixels.Length; i++)
+                if (backend == EncodeBackend.Cpu && m_ReuseCpuContext)
                 {
-                    float nx = decPixels[i].a;
-                    float ny = decPixels[i].g;
-                    float vx = nx * 2f - 1f;
-                    float vy = ny * 2f - 1f;
-                    float vz = Mathf.Sqrt(Mathf.Max(0f, 1f - vx * vx - vy * vy));
-                    decPixels[i] = new Color(nx, ny, vz * 0.5f + 0.5f, 1f);
+                    warmContext = AstcContext.Create(
+                        readableSource.graphicsFormat,
+                        m_TextureType,
+                        m_BlockSize,
+                        m_Quality,
+                        threadCount,
+                        m_UseAlphaWeight,
+                        m_UsePerceptual);
                 }
-            }
 
-            var result = ComputeMetrics(refPixels, decPixels, width, height, m_TextureType == TextureType.Normal);
-            result.Label = label;
-            result.EncodeMs = sw.Elapsed.TotalMilliseconds;
-            result.CompressedBytes = raw.Length;
-            result.UncompressedBytes = width * height * (isHdr ? 16 : 4);
-            result.DecodedPreview = BuildPreviewTexture(decPixels, width, height, m_ShowAlphaOnly);
-            result.HeatmapPreview = BuildHeatmapTexture(refPixels, decPixels, width, height, m_HeatmapGain);
-            return result;
+                string effectiveLabel = backend == EncodeBackend.Cpu
+                    ? $"{label} ({(warmContext != null ? "Warm Context" : "Cold Context")}, {threadCount}T)"
+                    : $"{label}{(gpuGenMips ? " (+MipGen)" : string.Empty)}";
+
+                timing = AstcBenchmarkSampler.Measure(
+                    name: effectiveLabel,
+                    category: "Interactive",
+                    backend: backend.ToString(),
+                    resolution: $"{width}x{height}",
+                    blockSize: m_BlockSize.ToString(),
+                    quality: m_Quality.ToString(),
+                    totalPixels: totalPixels,
+                    warmupRuns: m_WarmupRuns,
+                    iterations: m_Iterations,
+                    action: () =>
+                    {
+                        lastRaw?.Dispose();
+                        lastRaw = warmContext != null
+                            ? warmContext.CompressTexture(readableSource, m_TextureType)
+                            : readableSource.CompressTexture(options);
+                        return lastRaw != null ? lastRaw.Length : 0;
+                    });
+
+                if (lastRaw == null)
+                {
+                    m_StatusMessage = $"{effectiveLabel} returned null (backend unsupported or failed).";
+                    return null;
+                }
+
+                // Software-decode mip 0 via native astcenc so metrics & previews work on any PC/Mac Editor.
+                byte[] decodedRgba = Encoder.Decompress(lastRaw, width, height, m_BlockSize, srgb: isSrgb, isHdr: isHdr, outputBitness: isHdr ? 32 : 8);
+                if (decodedRgba == null)
+                {
+                    m_StatusMessage = $"{effectiveLabel} median {timing.MedianMs:F2} ms, but CPU software decompression failed.";
+                    return null;
+                }
+
+                Color[] decPixels = UnpackDecodedPixels(decodedRgba, width * height, isHdr);
+                if (m_TextureType == TextureType.Normal)
+                {
+                    // ASTC Normal maps are encoded in GGGR layout (R/G/B = ny, A = nx); reconstruct tangent-space RGB for metrics & preview.
+                    for (int i = 0; i < decPixels.Length; i++)
+                    {
+                        float nx = decPixels[i].a;
+                        float ny = decPixels[i].g;
+                        float vx = nx * 2f - 1f;
+                        float vy = ny * 2f - 1f;
+                        float vz = Mathf.Sqrt(Mathf.Max(0f, 1f - vx * vx - vy * vy));
+                        decPixels[i] = new Color(nx, ny, vz * 0.5f + 0.5f, 1f);
+                    }
+                }
+
+                var result = ComputeMetrics(refPixels, decPixels, width, height, m_TextureType == TextureType.Normal);
+                result.Label = effectiveLabel;
+                result.EncodeMs = timing.MedianMs;
+                result.MinMs = timing.MinMs;
+                result.P95Ms = timing.P95Ms;
+                result.ThroughputMPixPerSec = timing.ThroughputMPixPerSec;
+                result.GcAllocBytesPerOp = timing.GcAllocBytesPerOp;
+                result.CompressedBytes = lastRaw.Length;
+                result.UncompressedBytes = (int)Math.Min(int.MaxValue, totalPixels * (isHdr ? 16L : 4L));
+                result.DecodedPreview = BuildPreviewTexture(decPixels, width, height, m_ShowAlphaOnly);
+                result.HeatmapPreview = BuildHeatmapTexture(refPixels, decPixels, width, height, m_HeatmapGain);
+                return result;
+            }
+            finally
+            {
+                lastRaw?.Dispose();
+                warmContext?.Dispose();
+            }
         }
 
         private void ExportFile(string extension)
@@ -317,7 +389,9 @@ namespace Aperture.Astcenc.Editor
 
                 EditorGUILayout.LabelField(result.Label, EditorStyles.boldLabel);
                 EditorGUILayout.LabelField(
-                    $"Time: {result.EncodeMs:F2} ms   |   Size: {result.CompressedBytes / 1024.0:F1} KB ({savings:F1}% saved)   |   RGB PSNR: {result.RgbPsnrDb:F2} dB   |   RGBA PSNR: {result.RgbaPsnrDb:F2} dB");
+                    $"Median: {result.EncodeMs:F2} ms (Min {result.MinMs:F2} / P95 {result.P95Ms:F2})   |   {result.ThroughputMPixPerSec:F1} MP/s   |   GC: {result.GcAllocBytesPerOp / 1024.0:F1} KB/op");
+                EditorGUILayout.LabelField(
+                    $"Size: {result.CompressedBytes / 1024.0:F1} KB ({savings:F1}% saved)   |   RGB PSNR: {result.RgbPsnrDb:F2} dB   |   RGBA PSNR: {result.RgbaPsnrDb:F2} dB");
                 EditorGUILayout.LabelField(
                     $"RGB RMSE: {result.RgbRmse:F4}   |   Alpha RMSE: {result.AlphaRmse:F4}" +
                     (m_TextureType == TextureType.Normal

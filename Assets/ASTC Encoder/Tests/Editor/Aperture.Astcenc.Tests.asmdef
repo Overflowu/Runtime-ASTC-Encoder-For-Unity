@@ -2,7 +2,8 @@
     "name": "Aperture.Astcenc.Tests",
     "rootNamespace": "Aperture.Astcenc.Tests",
     "references": [
-        "Aperture.Astcenc.Runtime"
+        "Aperture.Astcenc.Runtime",
+        "Aperture.Astcenc.Editor"
     ],
     "includePlatforms": [
         "Editor"
