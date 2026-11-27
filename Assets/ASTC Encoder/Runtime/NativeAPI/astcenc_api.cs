@@ -295,20 +295,109 @@ public static class astcenc_api
         else
             astcenc_context_free_none(context);
     }
-#elif UNITY_EDITOR_OSX || UNITY_EDITOR_WIN || UNITY_EDITOR_LINUX || (!UNITY_EDITOR && (UNITY_IOS || UNITY_STANDALONE_OSX || UNITY_STANDALONE_WIN || UNITY_STANDALONE_LINUX))
+#elif UNITY_EDITOR_WIN || (!UNITY_EDITOR && UNITY_STANDALONE_WIN)
+    internal const bool IsNativeLibraryAvailable = true;
+    private const string Avx2LibraryName = "astcenc-avx2-shared.dll";
+    private const string Sse41LibraryName = "astcenc-sse4.1-shared.dll";
+    private const uint PF_AVX2_INSTRUCTIONS_AVAILABLE = 40u;
+
+    [DllImport("kernel32.dll")]
+    private static extern bool IsProcessorFeaturePresent(uint processorFeature);
+
+    private static readonly bool s_UseAvx2 = ProbeAvx2Support();
+
+    private static bool ProbeAvx2Support()
+    {
+        try
+        {
+            if (!IsProcessorFeaturePresent(PF_AVX2_INSTRUCTIONS_AVAILABLE))
+                return false;
+
+            astcenc_config probe = new astcenc_config();
+            return astcenc_config_init_avx2(astcenc_profile.ASTCENC_PRF_LDR, 4u, 4u, 1u, 0.0f, 0u, ref probe) == astcenc_error.ASTCENC_SUCCESS;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    [DllImport(Avx2LibraryName, EntryPoint = "astcenc_config_init", CallingConvention = CallingConvention.Cdecl)]
+    private static extern astcenc_error astcenc_config_init_avx2(astcenc_profile profile, uint block_x, uint block_y, uint block_z, float quality, uint flags, ref astcenc_config config);
+    [DllImport(Sse41LibraryName, EntryPoint = "astcenc_config_init", CallingConvention = CallingConvention.Cdecl)]
+    private static extern astcenc_error astcenc_config_init_sse41(astcenc_profile profile, uint block_x, uint block_y, uint block_z, float quality, uint flags, ref astcenc_config config);
+
+    [DllImport(Avx2LibraryName, EntryPoint = "astcenc_context_alloc", CallingConvention = CallingConvention.Cdecl)]
+    private static extern astcenc_error astcenc_context_alloc_avx2(ref astcenc_config config, uint thread_count, ref IntPtr context, IntPtr parent_context);
+    [DllImport(Sse41LibraryName, EntryPoint = "astcenc_context_alloc", CallingConvention = CallingConvention.Cdecl)]
+    private static extern astcenc_error astcenc_context_alloc_sse41(ref astcenc_config config, uint thread_count, ref IntPtr context, IntPtr parent_context);
+
+    [DllImport(Avx2LibraryName, EntryPoint = "astcenc_compress_image", CallingConvention = CallingConvention.Cdecl)]
+    private static extern astcenc_error astcenc_compress_image_avx2(IntPtr context, ref astcenc_image image, ref astcenc_swizzle swizzle, IntPtr data_out, UIntPtr data_len, uint thread_index);
+    [DllImport(Sse41LibraryName, EntryPoint = "astcenc_compress_image", CallingConvention = CallingConvention.Cdecl)]
+    private static extern astcenc_error astcenc_compress_image_sse41(IntPtr context, ref astcenc_image image, ref astcenc_swizzle swizzle, IntPtr data_out, UIntPtr data_len, uint thread_index);
+
+    [DllImport(Avx2LibraryName, EntryPoint = "astcenc_compress_reset", CallingConvention = CallingConvention.Cdecl)]
+    private static extern astcenc_error astcenc_compress_reset_avx2(IntPtr context);
+    [DllImport(Sse41LibraryName, EntryPoint = "astcenc_compress_reset", CallingConvention = CallingConvention.Cdecl)]
+    private static extern astcenc_error astcenc_compress_reset_sse41(IntPtr context);
+
+    [DllImport(Avx2LibraryName, EntryPoint = "astcenc_compress_cancel", CallingConvention = CallingConvention.Cdecl)]
+    private static extern astcenc_error astcenc_compress_cancel_avx2(IntPtr context);
+    [DllImport(Sse41LibraryName, EntryPoint = "astcenc_compress_cancel", CallingConvention = CallingConvention.Cdecl)]
+    private static extern astcenc_error astcenc_compress_cancel_sse41(IntPtr context);
+
+    [DllImport(Avx2LibraryName, EntryPoint = "astcenc_decompress_image", CallingConvention = CallingConvention.Cdecl)]
+    private static extern astcenc_error astcenc_decompress_image_avx2(IntPtr context, IntPtr data, UIntPtr data_len, ref astcenc_image image_out, ref astcenc_swizzle swizzle, uint thread_index);
+    [DllImport(Sse41LibraryName, EntryPoint = "astcenc_decompress_image", CallingConvention = CallingConvention.Cdecl)]
+    private static extern astcenc_error astcenc_decompress_image_sse41(IntPtr context, IntPtr data, UIntPtr data_len, ref astcenc_image image_out, ref astcenc_swizzle swizzle, uint thread_index);
+
+    [DllImport(Avx2LibraryName, EntryPoint = "astcenc_decompress_reset", CallingConvention = CallingConvention.Cdecl)]
+    private static extern astcenc_error astcenc_decompress_reset_avx2(IntPtr context);
+    [DllImport(Sse41LibraryName, EntryPoint = "astcenc_decompress_reset", CallingConvention = CallingConvention.Cdecl)]
+    private static extern astcenc_error astcenc_decompress_reset_sse41(IntPtr context);
+
+    [DllImport(Avx2LibraryName, EntryPoint = "astcenc_context_free", CallingConvention = CallingConvention.Cdecl)]
+    private static extern void astcenc_context_free_avx2(IntPtr context);
+    [DllImport(Sse41LibraryName, EntryPoint = "astcenc_context_free", CallingConvention = CallingConvention.Cdecl)]
+    private static extern void astcenc_context_free_sse41(IntPtr context);
+
+    public static astcenc_error astcenc_config_init(astcenc_profile profile, uint block_x, uint block_y, uint block_z, float quality, uint flags, ref astcenc_config config)
+        => s_UseAvx2 ? astcenc_config_init_avx2(profile, block_x, block_y, block_z, quality, flags, ref config) : astcenc_config_init_sse41(profile, block_x, block_y, block_z, quality, flags, ref config);
+
+    public static astcenc_error astcenc_context_alloc(ref astcenc_config config, uint thread_count, ref IntPtr context, IntPtr parent_context)
+        => s_UseAvx2 ? astcenc_context_alloc_avx2(ref config, thread_count, ref context, parent_context) : astcenc_context_alloc_sse41(ref config, thread_count, ref context, parent_context);
+
+    public static astcenc_error astcenc_compress_image(IntPtr context, ref astcenc_image image, ref astcenc_swizzle swizzle, IntPtr data_out, UIntPtr data_len, uint thread_index)
+        => s_UseAvx2 ? astcenc_compress_image_avx2(context, ref image, ref swizzle, data_out, data_len, thread_index) : astcenc_compress_image_sse41(context, ref image, ref swizzle, data_out, data_len, thread_index);
+
+    public static astcenc_error astcenc_compress_reset(IntPtr context)
+        => s_UseAvx2 ? astcenc_compress_reset_avx2(context) : astcenc_compress_reset_sse41(context);
+
+    public static astcenc_error astcenc_compress_cancel(IntPtr context)
+        => s_UseAvx2 ? astcenc_compress_cancel_avx2(context) : astcenc_compress_cancel_sse41(context);
+
+    public static astcenc_error astcenc_decompress_image(IntPtr context, IntPtr data, UIntPtr data_len, ref astcenc_image image_out, ref astcenc_swizzle swizzle, uint thread_index)
+        => s_UseAvx2 ? astcenc_decompress_image_avx2(context, data, data_len, ref image_out, ref swizzle, thread_index) : astcenc_decompress_image_sse41(context, data, data_len, ref image_out, ref swizzle, thread_index);
+
+    public static astcenc_error astcenc_decompress_reset(IntPtr context)
+        => s_UseAvx2 ? astcenc_decompress_reset_avx2(context) : astcenc_decompress_reset_sse41(context);
+
+    public static void astcenc_context_free(IntPtr context)
+    {
+        if (s_UseAvx2) astcenc_context_free_avx2(context);
+        else astcenc_context_free_sse41(context);
+    }
+#elif UNITY_EDITOR_OSX || UNITY_EDITOR_LINUX || (!UNITY_EDITOR && (UNITY_IOS || UNITY_STANDALONE_OSX || UNITY_STANDALONE_LINUX))
     internal const bool IsNativeLibraryAvailable = true;
 #if UNITY_EDITOR_OSX
     internal const string LibraryName = "libastcenc-shared";
-#elif UNITY_EDITOR_WIN
-    internal const string LibraryName = "astcenc-sse4.1-shared.dll";
 #elif UNITY_EDITOR_LINUX
     internal const string LibraryName = "libastcenc-sse4.1-shared";
 #elif UNITY_IOS
     internal const string LibraryName = "__Internal";
 #elif UNITY_STANDALONE_OSX
     internal const string LibraryName = "libastcenc-shared";
-#elif UNITY_STANDALONE_WIN
-    internal const string LibraryName = "astcenc-sse4.1-shared.dll";
 #elif UNITY_STANDALONE_LINUX
     internal const string LibraryName = "libastcenc-sse4.1-shared";
 #endif
