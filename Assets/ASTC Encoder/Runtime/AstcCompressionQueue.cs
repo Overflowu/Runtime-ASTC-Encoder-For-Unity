@@ -119,6 +119,7 @@ namespace Aperture.Astcenc.Runtime
         private readonly Dictionary<BlockSize, AstcContext> m_ParentContexts = new Dictionary<BlockSize, AstcContext>();
 
         private int m_ActiveCpuCount;
+        private int m_InFlightContextCount;
         private bool m_Disposed;
 
         /// <summary>
@@ -281,12 +282,22 @@ namespace Aperture.Astcenc.Runtime
                 }
                 m_ContextPool.Clear();
 
-                foreach (var parent in m_ParentContexts.Values)
+                // astc-encoder 5.x parent contexts hold shared read-only tables referenced by child contexts.
+                // Only free parent contexts once every in-flight child context has been disposed.
+                if (m_InFlightContextCount == 0)
                 {
-                    parent.Dispose();
+                    DisposeParentContextsLocked();
                 }
-                m_ParentContexts.Clear();
             }
+        }
+
+        private void DisposeParentContextsLocked()
+        {
+            foreach (var parent in m_ParentContexts.Values)
+            {
+                parent.Dispose();
+            }
+            m_ParentContexts.Clear();
         }
 
         private void EnqueueJob(PendingJob job)
@@ -314,12 +325,18 @@ namespace Aperture.Astcenc.Runtime
                 if (job.OutputTexture)
                 {
                     Texture2D tex = await job.Source.CompressToTextureAsync(job.Options, job.CancellationToken);
-                    job.TextureTcs.TrySetResult(tex);
+                    if (!job.TextureTcs.TrySetResult(tex) && tex != null)
+                    {
+                        UnityEngine.Object.DestroyImmediate(tex);
+                    }
                 }
                 else
                 {
                     AstcRaw raw = await job.Source.CompressTextureAsync(job.Options, job.CancellationToken);
-                    job.RawTcs.TrySetResult(raw);
+                    if (!job.RawTcs.TrySetResult(raw) && raw != null)
+                    {
+                        raw.Dispose();
+                    }
                 }
             }
             catch (OperationCanceledException)
@@ -341,9 +358,15 @@ namespace Aperture.Astcenc.Runtime
                 return;
             }
 
+            // Capture texture metadata on the main thread before awaiting so destroying tex2d mid-flight is safe.
+            GraphicsFormat srcFormat = tex2d.graphicsFormat;
+            int width = tex2d.width;
+            int height = tex2d.height;
+            string texName = tex2d.name;
+
             Interlocked.Increment(ref m_ActiveCpuCount);
             AstcContext rented = null;
-            var key = new ContextPoolKey(tex2d.graphicsFormat, job.Options);
+            var key = new ContextPoolKey(srcFormat, job.Options);
 
             try
             {
@@ -358,7 +381,10 @@ namespace Aperture.Astcenc.Runtime
                 AstcRaw raw = await AstcCpuBackend.CompressTextureWithContextAsync(tex2d, rented, job.Options.TextureType, job.Options.IncludeMipmaps, job.CancellationToken);
                 if (!job.OutputTexture)
                 {
-                    job.RawTcs.TrySetResult(raw);
+                    if (!job.RawTcs.TrySetResult(raw) && raw != null)
+                    {
+                        raw.Dispose();
+                    }
                     return;
                 }
 
@@ -370,16 +396,26 @@ namespace Aperture.Astcenc.Runtime
 
                 using (raw)
                 {
-                    GraphicsFormat targetFormat = Encoder.GetTargetAstcFormat(tex2d.graphicsFormat, job.Options.BlockSize, job.Options.TextureType);
-                    int mipCount = AstcKtxContainer.InferMipCount(raw.Length, tex2d.width, tex2d.height, job.Options.BlockSize);
+                    GraphicsFormat targetFormat = Encoder.GetTargetAstcFormat(srcFormat, job.Options.BlockSize, job.Options.TextureType);
+                    if (!Encoder.CanCreateAstcTexture(targetFormat))
+                    {
+                        Debug.LogError($"ASTC texture format '{targetFormat}' is not supported on this device. Use EnqueueToRaw instead.");
+                        job.TextureTcs.TrySetResult(null);
+                        return;
+                    }
+
+                    int mipCount = AstcKtxContainer.InferMipCount(raw.Length, width, height, job.Options.BlockSize);
                     TextureCreationFlags flags = mipCount > 1 ? TextureCreationFlags.MipChain : TextureCreationFlags.None;
-                    var dst = new Texture2D(tex2d.width, tex2d.height, targetFormat, mipCount, flags);
+                    var dst = new Texture2D(width, height, targetFormat, mipCount, flags);
                     try
                     {
-                        dst.name = tex2d.name;
+                        dst.name = texName;
                         dst.LoadRawTextureData(raw.Data, raw.Length);
                         dst.Apply(false, job.Options.MakeNoLongerReadable);
-                        job.TextureTcs.TrySetResult(dst);
+                        if (!job.TextureTcs.TrySetResult(dst))
+                        {
+                            UnityEngine.Object.DestroyImmediate(dst);
+                        }
                     }
                     catch
                     {
@@ -412,6 +448,7 @@ namespace Aperture.Astcenc.Runtime
 
                 if (m_ContextPool.TryGetValue(key, out Stack<AstcContext> stack) && stack.Count > 0)
                 {
+                    m_InFlightContextCount++;
                     return stack.Pop();
                 }
 
@@ -431,7 +468,7 @@ namespace Aperture.Astcenc.Runtime
                         m_ParentContexts[key.BlockSize] = parent;
                 }
 
-                return AstcContext.Create(
+                AstcContext child = AstcContext.Create(
                     key.Format,
                     options.TextureType,
                     options.BlockSize,
@@ -441,6 +478,9 @@ namespace Aperture.Astcenc.Runtime
                     options.UsePerceptual,
                     options.AlphaScaleRadius,
                     parent);
+                if (child != null)
+                    m_InFlightContextCount++;
+                return child;
             }
         }
 
@@ -454,8 +494,16 @@ namespace Aperture.Astcenc.Runtime
                 if (m_Disposed)
                 {
                     ctx.Dispose();
+                    m_InFlightContextCount--;
+                    if (m_InFlightContextCount <= 0)
+                    {
+                        m_InFlightContextCount = 0;
+                        DisposeParentContextsLocked();
+                    }
                     return;
                 }
+
+                m_InFlightContextCount--;
 
                 if (!m_ContextPool.TryGetValue(key, out Stack<AstcContext> stack))
                 {
