@@ -757,7 +757,7 @@ namespace Aperture.Astcenc.Runtime
                 return null;
             }
 
-            using AstcContext context = AstcContext.Create(
+            using AstcContextPool.CompressorLease lease = AstcContextPool.RentCompressor(
                 inputTexture.graphicsFormat,
                 textureType,
                 blockSize,
@@ -766,13 +766,13 @@ namespace Aperture.Astcenc.Runtime
                 useAlphaWeight,
                 usePerceptual,
                 alphaScaleRadius,
-                useUnityJobSystem: useUnityJobSystem);
-            if (context == null)
+                useUnityJobSystem);
+            if (lease.Context == null)
             {
                 return null;
             }
 
-            return CompressTextureWithContext(inputTexture, context, textureType, includeMipmaps);
+            return CompressTextureWithContext(inputTexture, lease.Context, textureType, includeMipmaps);
         }
 
         internal static Task<AstcRaw> CompressTextureAsync(
@@ -835,7 +835,7 @@ namespace Aperture.Astcenc.Runtime
                 using (snapshot)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    using AstcContext context = AstcContext.Create(
+                    using AstcContextPool.CompressorLease lease = AstcContextPool.RentCompressor(
                         graphicsFormat,
                         textureType,
                         blockSize,
@@ -844,12 +844,12 @@ namespace Aperture.Astcenc.Runtime
                         useAlphaWeight,
                         usePerceptual,
                         alphaScaleRadius);
-                    if (context == null)
+                    if (lease.Context == null)
                     {
                         return null;
                     }
 
-                    return CompressCompactSnapshot(context, swizzle, snapshot, cancellationToken);
+                    return CompressCompactSnapshot(lease.Context, swizzle, snapshot, cancellationToken);
                 }
             });
         }
@@ -1102,8 +1102,8 @@ namespace Aperture.Astcenc.Runtime
             }
             int requiredBytes = (int)requiredBytesLong;
 
-            using AstcContext context = AstcContext.CreateDecompressor(blockSize, srgb, isHdr, threadCount);
-            if (context == null)
+            using AstcContextPool.DecompressorLease lease = AstcContextPool.RentDecompressor(blockSize, srgb, isHdr, threadCount);
+            if (lease.Context == null)
                 return null;
 
             astcenc_swizzle swizzle = new astcenc_swizzle
@@ -1118,7 +1118,7 @@ namespace Aperture.Astcenc.Runtime
             try
             {
                 imageOut.AllocateOutput(width, height, outputBitness, out IntPtr slicePtr, out int byteCount);
-                astcenc_error status = context.DecompressSingleImage(compressedData, requiredBytes, ref imageOut, ref swizzle);
+                astcenc_error status = lease.Context.DecompressSingleImage(compressedData, requiredBytes, ref imageOut, ref swizzle);
                 if (status != astcenc_error.ASTCENC_SUCCESS)
                 {
                     Debug.LogError("ASTC decompress failed: " + status);
@@ -1266,8 +1266,8 @@ namespace Aperture.Astcenc.Runtime
                 return null;
             }
 
-            using AstcContext ctx = AstcContext.Create(sourceFormat, textureType, blockSize, quality, threadCount, useAlphaWeight, usePerceptual, alphaScaleRadius, useUnityJobSystem: useUnityJobSystem);
-            if (ctx == null)
+            using AstcContextPool.CompressorLease lease = AstcContextPool.RentCompressor(sourceFormat, textureType, blockSize, quality, threadCount, useAlphaWeight, usePerceptual, alphaScaleRadius, useUnityJobSystem);
+            if (lease.Context == null)
                 return null;
 
             var snapshot = new CompactTextureSnapshot
@@ -1280,7 +1280,7 @@ namespace Aperture.Astcenc.Runtime
             };
 
             astcenc_swizzle swizzle = GetSwizzle(sourceFormat, textureType);
-            return CompressCompactSnapshot(ctx, swizzle, snapshot, CancellationToken.None);
+            return CompressCompactSnapshot(lease.Context, swizzle, snapshot, CancellationToken.None);
         }
 
         internal static unsafe Task<AstcRaw> CompressRawPixelsAsync(
@@ -1353,11 +1353,11 @@ namespace Aperture.Astcenc.Runtime
                 using (snapshot)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    using AstcContext ctx = AstcContext.Create(sourceFormat, textureType, blockSize, quality, threadCount, useAlphaWeight, usePerceptual, alphaScaleRadius);
-                    if (ctx == null)
+                    using AstcContextPool.CompressorLease lease = AstcContextPool.RentCompressor(sourceFormat, textureType, blockSize, quality, threadCount, useAlphaWeight, usePerceptual, alphaScaleRadius);
+                    if (lease.Context == null)
                         return null;
                     astcenc_swizzle swizzle = GetSwizzle(sourceFormat, textureType);
-                    return CompressCompactSnapshot(ctx, swizzle, snapshot, cancellationToken);
+                    return CompressCompactSnapshot(lease.Context, swizzle, snapshot, cancellationToken);
                 }
             }, cancellationToken);
         }
@@ -1399,35 +1399,41 @@ namespace Aperture.Astcenc.Runtime
             if (expectedOutBytes <= 0 || expectedOutBytes > destCapacity)
                 return false;
 
-            using AstcContext ctx = AstcContext.Create(sourceFormat, textureType, blockSize, quality, threadCount, useAlphaWeight, usePerceptual, alphaScaleRadius, useUnityJobSystem: useUnityJobSystem);
-            if (ctx == null)
+            using AstcContextPool.CompressorLease lease = AstcContextPool.RentCompressor(sourceFormat, textureType, blockSize, quality, threadCount, useAlphaWeight, usePerceptual, alphaScaleRadius, useUnityJobSystem);
+            if (lease.Context == null)
                 return false;
 
             astcenc_swizzle swizzle = GetSwizzle(sourceFormat, textureType);
             int bitness = GetBitness(sourceFormat);
             bool direct4Channel = IsDirect4ChannelFormat(sourceFormat);
 
+            if (!direct4Channel)
+            {
+                // Reuse the already-leased context directly without allocating a second AstcContext.
+                var snapshot = new CompactTextureSnapshot
+                {
+                    Buffer = pixelPtr,
+                    Format = sourceFormat,
+                    Width = width,
+                    Height = height,
+                    MipCount = 1,
+                };
+                using AstcRaw tmp = CompressCompactSnapshot(lease.Context, swizzle, snapshot, CancellationToken.None);
+                if (tmp == null || tmp.Length > destCapacity)
+                    return false;
+                UnsafeUtility.MemCpy((void*)destPtr, (void*)tmp.Data, tmp.Length);
+                bytesWritten = tmp.Length;
+                return true;
+            }
+
             astcenc_image image = new astcenc_image();
             try
             {
-                if (direct4Channel)
-                {
-                    if (bitness == 8) image.LoadFromDirectPtr((RGBA8*)pixelPtr, width, height, 8);
-                    else if (bitness == 16) image.LoadFromDirectPtr((RGBA16F*)pixelPtr, width, height, 16);
-                    else image.LoadFromDirectPtr((RGBA32F*)pixelPtr, width, height, 32);
-                }
-                else
-                {
-                    // Non-4-channel formats expand into a single-mip working image
-                    using AstcRaw tmp = CompressRawPixels(pixelPtr, pixelByteLength, width, height, sourceFormat, textureType, blockSize, quality, threadCount, useAlphaWeight, usePerceptual, alphaScaleRadius, useUnityJobSystem);
-                    if (tmp == null || tmp.Length > destCapacity)
-                        return false;
-                    UnsafeUtility.MemCpy((void*)destPtr, (void*)tmp.Data, tmp.Length);
-                    bytesWritten = tmp.Length;
-                    return true;
-                }
+                if (bitness == 8) image.LoadFromDirectPtr((RGBA8*)pixelPtr, width, height, 8);
+                else if (bitness == 16) image.LoadFromDirectPtr((RGBA16F*)pixelPtr, width, height, 16);
+                else image.LoadFromDirectPtr((RGBA32F*)pixelPtr, width, height, 32);
 
-                astcenc_error status = ctx.CompressSingleImage(ref image, ref swizzle, destPtr, (int)expectedOutBytes, CancellationToken.None);
+                astcenc_error status = lease.Context.CompressSingleImage(ref image, ref swizzle, destPtr, (int)expectedOutBytes, CancellationToken.None);
                 if (status != astcenc_error.ASTCENC_SUCCESS)
                     return false;
 

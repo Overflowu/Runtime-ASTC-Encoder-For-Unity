@@ -190,6 +190,15 @@ namespace Aperture.Astcenc.Runtime
             AstcGpuBackend.ReleaseCache();
         }
 
+        /// <summary>
+        /// Releases all cached native CPU <see cref="AstcContext"/> instances held by the internal static pool.
+        /// Safe to call even while background CPU compressions are in flight (in-flight parent tables are retired lazily).
+        /// </summary>
+        public static void ReleaseCpuContextPool()
+        {
+            AstcContextPool.ReleaseAll();
+        }
+
         public static bool IsSupport(Texture texture, EncodeBackend backend = EncodeBackend.Auto)
         {
             return backend switch
