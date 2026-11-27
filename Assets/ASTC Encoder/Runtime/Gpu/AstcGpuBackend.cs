@@ -151,23 +151,21 @@ namespace Aperture.Astcenc.Runtime
 
         internal static bool CanUseDirectCopy(int width, int height, int mipCount, BlockSize blockSize, GraphicsFormat astcFormat)
         {
+            if (width <= 0 || height <= 0 || mipCount <= 0)
+                return false;
+
             if ((SystemInfo.copyTextureSupport & CopyTextureSupport.RTToTexture) == 0)
                 return false;
 
             if (!IsSampleSupported(astcFormat))
                 return false;
 
-            if (!Encoder.GetBlockSize(blockSize, out uint bx, out uint by, out _))
+            if (!Encoder.GetBlockSize(blockSize, out _, out _, out _))
                 return false;
 
-            for (int mip = 0; mip < mipCount; mip++)
-            {
-                int mipW = Math.Max(1, width >> mip);
-                int mipH = Math.Max(1, height >> mip);
-                if ((mipW % (int)bx) != 0 || (mipH % (int)by) != 0)
-                    return false;
-            }
-
+            // CommandBuffer.CopyTexture from R32G32B32A32_UInt (ceil(mipW/bx) x ceil(mipH/by)) to ASTC
+            // operates on physical block dimensions on Metal, Vulkan, D3D12, and OpenGL ES 3.1+,
+            // supporting ASTC_6x6 on POT textures and full mip chains down to 1x1 without CPU readback.
             return true;
         }
 
