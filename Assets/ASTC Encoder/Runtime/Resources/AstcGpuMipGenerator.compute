@@ -38,39 +38,44 @@ void DownsampleColor(uint3 id : SV_DispatchThreadID)
 
     uint sx0 = id.x * 2u;
     uint sy0 = id.y * 2u;
-    uint sx1 = min(sx0 + 1u, _MipSrcWidth - 1u);
-    uint sy1 = min(sy0 + 1u, _MipSrcHeight - 1u);
+    uint sxEnd = (id.x + 1u == _MipDstWidth) ? (_MipSrcWidth - 1u) : min(sx0 + 1u, _MipSrcWidth - 1u);
+    uint syEnd = (id.y + 1u == _MipDstHeight) ? (_MipSrcHeight - 1u) : min(sy0 + 1u, _MipSrcHeight - 1u);
 
-    float4 c00 = _MipSrcTex.Load(int3(sx0, sy0, _MipSrcLevel));
-    float4 c10 = _MipSrcTex.Load(int3(sx1, sy0, _MipSrcLevel));
-    float4 c01 = _MipSrcTex.Load(int3(sx0, sy1, _MipSrcLevel));
-    float4 c11 = _MipSrcTex.Load(int3(sx1, sy1, _MipSrcLevel));
+    float4 sumColor = 0.0;
+    float3 sumWeightedRgb = 0.0;
+    float sumAlphaW = 0.0;
+    float tapCount = 0.0;
 
-    if (_MipIsHdr != 0u)
+    for (uint sy = sy0; sy <= syEnd; ++sy)
     {
-        c00 = SanitizeHdr(c00);
-        c10 = SanitizeHdr(c10);
-        c01 = SanitizeHdr(c01);
-        c11 = SanitizeHdr(c11);
+        for (uint sx = sx0; sx <= sxEnd; ++sx)
+        {
+            float4 c = _MipSrcTex.Load(int3(sx, sy, _MipSrcLevel));
+            if (_MipIsHdr != 0u)
+                c = SanitizeHdr(c);
+
+            sumColor += c;
+            if (_MipIsAlphaWeighted != 0u && _MipIsHdr == 0u)
+            {
+                float w = saturate(c.a);
+                sumWeightedRgb += c.rgb * w;
+                sumAlphaW += w;
+            }
+            tapCount += 1.0;
+        }
     }
 
+    float invCount = 1.0 / max(tapCount, 1.0);
     float4 result;
     if (_MipIsAlphaWeighted != 0u && _MipIsHdr == 0u)
     {
         // Premultiplied alpha-weighted box filter prevents dark fringe bleed on transparent borders.
-        float w00 = saturate(c00.a);
-        float w10 = saturate(c10.a);
-        float w01 = saturate(c01.a);
-        float w11 = saturate(c11.a);
-        float sumW = w00 + w10 + w01 + w11;
-        float3 rgb = (sumW > 1e-5)
-            ? ((c00.rgb * w00 + c10.rgb * w10 + c01.rgb * w01 + c11.rgb * w11) / sumW)
-            : (0.25 * (c00.rgb + c10.rgb + c01.rgb + c11.rgb));
-        result = float4(rgb, 0.25 * sumW);
+        float3 rgb = (sumAlphaW > 1e-5) ? (sumWeightedRgb / sumAlphaW) : (sumColor.rgb * invCount);
+        result = float4(rgb, sumAlphaW * invCount);
     }
     else
     {
-        result = 0.25 * (c00 + c10 + c01 + c11);
+        result = sumColor * invCount;
     }
 
     _MipDstTex[id.xy] = result;
@@ -93,13 +98,17 @@ void DownsampleNormal(uint3 id : SV_DispatchThreadID)
 
     uint sx0 = id.x * 2u;
     uint sy0 = id.y * 2u;
-    uint sx1 = min(sx0 + 1u, _MipSrcWidth - 1u);
-    uint sy1 = min(sy0 + 1u, _MipSrcHeight - 1u);
+    uint sxEnd = (id.x + 1u == _MipDstWidth) ? (_MipSrcWidth - 1u) : min(sx0 + 1u, _MipSrcWidth - 1u);
+    uint syEnd = (id.y + 1u == _MipDstHeight) ? (_MipSrcHeight - 1u) : min(sy0 + 1u, _MipSrcHeight - 1u);
 
-    float3 n = UnpackTangentNormal(_MipSrcTex.Load(int3(sx0, sy0, _MipSrcLevel)))
-             + UnpackTangentNormal(_MipSrcTex.Load(int3(sx1, sy0, _MipSrcLevel)))
-             + UnpackTangentNormal(_MipSrcTex.Load(int3(sx0, sy1, _MipSrcLevel)))
-             + UnpackTangentNormal(_MipSrcTex.Load(int3(sx1, sy1, _MipSrcLevel)));
+    float3 n = 0.0;
+    for (uint sy = sy0; sy <= syEnd; ++sy)
+    {
+        for (uint sx = sx0; sx <= sxEnd; ++sx)
+        {
+            n += UnpackTangentNormal(_MipSrcTex.Load(int3(sx, sy, _MipSrcLevel)));
+        }
+    }
 
     float len = length(n);
     n = (len > 1e-5) ? (n / len) : float3(0.0, 0.0, 1.0);

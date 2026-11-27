@@ -460,8 +460,12 @@ namespace Aperture.Astcenc.Runtime
             int srcMips = Math.Max(1, source.mipmapCount);
             if (generateMipmaps && srcMips <= 1 && (source.width > 1 || source.height > 1) && EnsureMipShaderLoaded())
             {
-                willGenerateMips = true;
-                return CalculateFullMipCount(source.width, source.height);
+                bool isHdrSrc = GraphicsFormatUtility.IsFloatFormat(source.graphicsFormat);
+                if (!isHdrSrc || IsLoadStoreSupported(GraphicsFormat.R16G16B16A16_SFloat))
+                {
+                    willGenerateMips = true;
+                    return CalculateFullMipCount(source.width, source.height);
+                }
             }
 
             return includeMipmaps ? srcMips : 1;
