@@ -361,7 +361,8 @@ jobs:
           cp staging/plugin-linux-x64/libastcenc-sse4.1-shared.so dist/Plugins/Linux/x86_64/
           cp staging/plugin-macos-universal/libastcenc-shared.dylib dist/Plugins/Mac/
           cp staging/plugin-ios-arm64/libastcenc-neon-static.a dist/Plugins/iOS/
-          cp -r staging/plugin-ios-xcframework/astcenc.xcframework dist/Plugins/iOS/
+          mkdir -p dist/Plugins/iOS/astcenc.xcframework
+          cp -r staging/plugin-ios-xcframework/. dist/Plugins/iOS/astcenc.xcframework/
           cp staging/plugin-android-arm64-v8a/libastcenc-neon-shared.so dist/Plugins/Android/arm64-v8a/
           cp staging/plugin-android-armeabi-v7a/libastcenc-none-shared.so dist/Plugins/Android/armeabi-v7a/
 
