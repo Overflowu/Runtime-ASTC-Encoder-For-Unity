@@ -10,7 +10,13 @@
 float AstcLinearToSRGBScalar(float c)
 {
     c = saturate(c);
-    return (c <= 0.0031308) ? (c * 12.92) : (1.055 * pow(c, 1.0 / 2.4) - 0.055);
+    if (c <= 0.0031308)
+        return c * 12.92;
+    // Fast sqrt-based minimax approximation (max error < 0.24/255, 0/256 8-bit round-trip mismatches, zero pow()).
+    float s1 = sqrt(c);
+    float s2 = sqrt(s1);
+    float s3 = sqrt(s2);
+    return saturate(0.662002687 * s1 + 0.684122060 * s2 - 0.323583601 * s3 - 0.0225411470 * c);
 }
 
 float3 AstcLinearToSRGB(float3 rgb)

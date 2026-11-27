@@ -255,6 +255,13 @@ namespace Aperture.Astcenc.Runtime
             };
         }
 
+        private static int GetDispatchGroupsY(int blockCountY, BlockSize blockSize)
+        {
+            return (blockSize == BlockSize.ASTC_8x8 || blockSize == BlockSize.ASTC_10x10 || blockSize == BlockSize.ASTC_12x12)
+                ? (blockCountY + 3) >> 2
+                : (blockCountY + 7) >> 3;
+        }
+
         private static int GetTexKernel(int slot, uint qualityTier)
         {
             return qualityTier == 0u ? s_TexFastKernels[slot] : s_TexKernels[slot];
@@ -664,7 +671,7 @@ namespace Aperture.Astcenc.Runtime
                     SetCommonUniforms(s_Shader, mipW, mipH, encodeSrcMip, blockCountX, blockCountY, blockOffset, mode, encodeIsSRGB, useAlphaWeight, qualityTier);
 
                     int groupsX = (blockCountX + 7) >> 3;
-                    int groupsY = (blockCountY + 7) >> 3;
+                    int groupsY = GetDispatchGroupsY(blockCountY, blockSize);
                     s_Shader.Dispatch(kernel, groupsX, groupsY, 1);
 
                     blockOffset += blockCountX * blockCountY;
@@ -1006,7 +1013,7 @@ namespace Aperture.Astcenc.Runtime
             cmd.SetComputeTextureParam(s_Shader, kernel, s_PropDestTex, tempRT);
 
             int groupsX = (blockCountX + 7) >> 3;
-            int groupsY = (blockCountY + 7) >> 3;
+            int groupsY = GetDispatchGroupsY(blockCountY, blockSize);
             cmd.DispatchCompute(s_Shader, kernel, groupsX, groupsY, 1);
 
             cmd.CopyTexture(tempRT, 0, 0, 0, 0, blockCountX, blockCountY, destination, destSlice, destMip, destX, destY);
@@ -1346,7 +1353,7 @@ namespace Aperture.Astcenc.Runtime
                         s_Shader.SetTexture(kernel, s_PropSourceTex, inputTexture);
                         s_Shader.SetTexture(kernel, s_PropDestTex, rt);
                         SetCommonUniforms(s_Shader, mipW, mipH, mip, blockW, blockH, 0, mode, isSRGB, useAlphaWeight, qualityTier);
-                        s_Shader.Dispatch(kernel, (blockW + 7) >> 3, (blockH + 7) >> 3, 1);
+                        s_Shader.Dispatch(kernel, (blockW + 7) >> 3, GetDispatchGroupsY(blockH, blockSize), 1);
                     }
 
                     if (!inputTexture.Reinitialize(width, height, astcFormat, mipCount > 1))

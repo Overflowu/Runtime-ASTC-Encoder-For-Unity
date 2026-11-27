@@ -83,27 +83,27 @@ void DispatchToBuffer(uint3 id)
 [numthreads(8, 8, 1)] void EncodeTex4x4(uint3 id : SV_DispatchThreadID)       { DispatchToTexture(id); }
 [numthreads(8, 8, 1)] void EncodeTex5x5(uint3 id : SV_DispatchThreadID)       { DispatchToTexture(id); }
 [numthreads(8, 8, 1)] void EncodeTex6x6(uint3 id : SV_DispatchThreadID)       { DispatchToTexture(id); }
-[numthreads(8, 8, 1)] void EncodeTex8x8(uint3 id : SV_DispatchThreadID)       { DispatchToTexture(id); }
-[numthreads(8, 8, 1)] void EncodeTex10x10(uint3 id : SV_DispatchThreadID)     { DispatchToTexture(id); }
-[numthreads(8, 8, 1)] void EncodeTex12x12(uint3 id : SV_DispatchThreadID)     { DispatchToTexture(id); }
+[numthreads(8, 4, 1)] void EncodeTex8x8(uint3 id : SV_DispatchThreadID)       { DispatchToTexture(id); }
+[numthreads(8, 4, 1)] void EncodeTex10x10(uint3 id : SV_DispatchThreadID)     { DispatchToTexture(id); }
+[numthreads(8, 4, 1)] void EncodeTex12x12(uint3 id : SV_DispatchThreadID)     { DispatchToTexture(id); }
 
 [numthreads(8, 8, 1)] void EncodeBuf4x4(uint3 id : SV_DispatchThreadID)       { DispatchToBuffer(id); }
 [numthreads(8, 8, 1)] void EncodeBuf5x5(uint3 id : SV_DispatchThreadID)       { DispatchToBuffer(id); }
 [numthreads(8, 8, 1)] void EncodeBuf6x6(uint3 id : SV_DispatchThreadID)       { DispatchToBuffer(id); }
-[numthreads(8, 8, 1)] void EncodeBuf8x8(uint3 id : SV_DispatchThreadID)       { DispatchToBuffer(id); }
-[numthreads(8, 8, 1)] void EncodeBuf10x10(uint3 id : SV_DispatchThreadID)     { DispatchToBuffer(id); }
-[numthreads(8, 8, 1)] void EncodeBuf12x12(uint3 id : SV_DispatchThreadID)     { DispatchToBuffer(id); }
+[numthreads(8, 4, 1)] void EncodeBuf8x8(uint3 id : SV_DispatchThreadID)       { DispatchToBuffer(id); }
+[numthreads(8, 4, 1)] void EncodeBuf10x10(uint3 id : SV_DispatchThreadID)     { DispatchToBuffer(id); }
+[numthreads(8, 4, 1)] void EncodeBuf12x12(uint3 id : SV_DispatchThreadID)     { DispatchToBuffer(id); }
 
 [numthreads(8, 8, 1)] void EncodeTex4x4Fast(uint3 id : SV_DispatchThreadID)   { DispatchToTexture(id); }
 [numthreads(8, 8, 1)] void EncodeTex5x5Fast(uint3 id : SV_DispatchThreadID)   { DispatchToTexture(id); }
 [numthreads(8, 8, 1)] void EncodeTex6x6Fast(uint3 id : SV_DispatchThreadID)   { DispatchToTexture(id); }
-[numthreads(8, 8, 1)] void EncodeTex8x8Fast(uint3 id : SV_DispatchThreadID)   { DispatchToTexture(id); }
-[numthreads(8, 8, 1)] void EncodeTex10x10Fast(uint3 id : SV_DispatchThreadID) { DispatchToTexture(id); }
-[numthreads(8, 8, 1)] void EncodeTex12x12Fast(uint3 id : SV_DispatchThreadID) { DispatchToTexture(id); }
+[numthreads(8, 4, 1)] void EncodeTex8x8Fast(uint3 id : SV_DispatchThreadID)   { DispatchToTexture(id); }
+[numthreads(8, 4, 1)] void EncodeTex10x10Fast(uint3 id : SV_DispatchThreadID) { DispatchToTexture(id); }
+[numthreads(8, 4, 1)] void EncodeTex12x12Fast(uint3 id : SV_DispatchThreadID) { DispatchToTexture(id); }
 
 [numthreads(8, 8, 1)] void EncodeBuf4x4Fast(uint3 id : SV_DispatchThreadID)   { DispatchToBuffer(id); }
 [numthreads(8, 8, 1)] void EncodeBuf5x5Fast(uint3 id : SV_DispatchThreadID)   { DispatchToBuffer(id); }
 [numthreads(8, 8, 1)] void EncodeBuf6x6Fast(uint3 id : SV_DispatchThreadID)   { DispatchToBuffer(id); }
-[numthreads(8, 8, 1)] void EncodeBuf8x8Fast(uint3 id : SV_DispatchThreadID)   { DispatchToBuffer(id); }
-[numthreads(8, 8, 1)] void EncodeBuf10x10Fast(uint3 id : SV_DispatchThreadID) { DispatchToBuffer(id); }
-[numthreads(8, 8, 1)] void EncodeBuf12x12Fast(uint3 id : SV_DispatchThreadID) { DispatchToBuffer(id); }
+[numthreads(8, 4, 1)] void EncodeBuf8x8Fast(uint3 id : SV_DispatchThreadID)   { DispatchToBuffer(id); }
+[numthreads(8, 4, 1)] void EncodeBuf10x10Fast(uint3 id : SV_DispatchThreadID) { DispatchToBuffer(id); }
+[numthreads(8, 4, 1)] void EncodeBuf12x12Fast(uint3 id : SV_DispatchThreadID) { DispatchToBuffer(id); }
