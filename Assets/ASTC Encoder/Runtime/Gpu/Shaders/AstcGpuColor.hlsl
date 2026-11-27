@@ -419,20 +419,23 @@ uint AstcHash52(uint inp)
     return inp;
 }
 
-// Returns partition index (0 or 1) for 2-partition ASTC block at texel (x, y).
-// smallBlock must be true when (blockX * blockY) < 32 (i.e. 4x4 and 5x5).
-uint AstcSelectPartition2(uint seed, uint x, uint y, bool smallBlock)
+struct AstcPart2Params
 {
-    if (smallBlock)
-    {
-        x <<= 1u;
-        y <<= 1u;
-    }
+    uint seed1;
+    uint seed2;
+    uint seed3;
+    uint seed4;
+    uint offA;
+    uint offB;
+};
 
+// Precomputes all seed-dependent Khronos Section 22.21 2-partition hash parameters once outside pixel loops.
+AstcPart2Params AstcPreparePartition2(uint seed, bool smallBlock)
+{
     uint s = seed + 1024u;
     uint rnum = AstcHash52(s);
 
-    uint seed1 = (rnum & 0xFu);        seed1 *= seed1;
+    uint seed1 = (rnum & 0xFu);         seed1 *= seed1;
     uint seed2 = ((rnum >> 4u) & 0xFu); seed2 *= seed2;
     uint seed3 = ((rnum >> 8u) & 0xFu); seed3 *= seed3;
     uint seed4 = ((rnum >> 12u) & 0xFu); seed4 *= seed4;
@@ -454,10 +457,36 @@ uint AstcSelectPartition2(uint seed, uint x, uint y, bool smallBlock)
     seed3 >>= sh1;
     seed4 >>= sh2;
 
-    uint a = (seed1 * x + seed2 * y + (rnum >> 14u)) & 0x3Fu;
-    uint b = (seed3 * x + seed4 * y + (rnum >> 10u)) & 0x3Fu;
+    if (smallBlock)
+    {
+        seed1 <<= 1u;
+        seed2 <<= 1u;
+        seed3 <<= 1u;
+        seed4 <<= 1u;
+    }
 
+    AstcPart2Params p;
+    p.seed1 = seed1;
+    p.seed2 = seed2;
+    p.seed3 = seed3;
+    p.seed4 = seed4;
+    p.offA = rnum >> 14u;
+    p.offB = rnum >> 10u;
+    return p;
+}
+
+uint AstcEvalPartition2(AstcPart2Params p, uint x, uint y)
+{
+    uint a = (p.seed1 * x + p.seed2 * y + p.offA) & 0x3Fu;
+    uint b = (p.seed3 * x + p.seed4 * y + p.offB) & 0x3Fu;
     return (b > a) ? 1u : 0u;
+}
+
+// Returns partition index (0 or 1) for 2-partition ASTC block at texel (x, y).
+// smallBlock must be true when (blockX * blockY) < 32 (i.e. 4x4 and 5x5).
+uint AstcSelectPartition2(uint seed, uint x, uint y, bool smallBlock)
+{
+    return AstcEvalPartition2(AstcPreparePartition2(seed, smallBlock), x, y);
 }
 
 // ============================================================================
