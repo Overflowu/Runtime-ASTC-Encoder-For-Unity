@@ -61,6 +61,8 @@ namespace Aperture.Astcenc.Runtime
 
         private static readonly int s_PropTempBlocksRT = Shader.PropertyToID("_AstcTempBlocksRT");
         private static readonly int s_PropTempSliceRT = Shader.PropertyToID("_AstcTempSliceRT");
+        private static readonly int s_PropTempMipA = Shader.PropertyToID("_AstcTempMipA");
+        private static readonly int s_PropTempMipB = Shader.PropertyToID("_AstcTempMipB");
 
         private static bool IsLoadStoreSupported(GraphicsFormat format)
         {
@@ -1131,6 +1133,110 @@ namespace Aperture.Astcenc.Runtime
             }
         }
 
+        internal static void RecordDirectCompressToTexture(
+            CommandBuffer cmd,
+            Texture source,
+            Texture2D dst,
+            TextureType textureType,
+            BlockSize blockSize,
+            CompressQuality quality,
+            int mipCount,
+            bool useAlphaWeight,
+            bool willGenMips)
+        {
+            if (!willGenMips)
+            {
+                for (int mip = 0; mip < mipCount; mip++)
+                {
+                    Encode(cmd, source, dst, textureType, blockSize, quality, mip, mip, 0, 0, useAlphaWeight);
+                }
+                return;
+            }
+
+            int slot = BlockSizeToSlot(blockSize);
+            if (slot < 0 || !Encoder.GetBlockSize(blockSize, out uint bx, out uint by, out _))
+                throw new ArgumentException($"Unsupported ASTC block size: {blockSize}", nameof(blockSize));
+
+            uint mode = ResolveShaderMode(source.graphicsFormat, textureType, out bool isSRGB, out bool isHdr);
+            uint qualityTier = MapQualityTier(quality);
+            int kernel = GetTexKernel(slot, qualityTier);
+            bool useFloat16Mip = (isHdr || isSRGB) && textureType != TextureType.Normal;
+            int mipKernel = textureType == TextureType.Normal ? s_MipKernelNormal : s_MipKernelColor;
+
+            // Mip 0: encode directly from source
+            Encode(cmd, source, dst, textureType, blockSize, quality, 0, 0, 0, 0, useAlphaWeight);
+
+            int prevMipId = 0;
+            var tempBlocksRT = new RenderTargetIdentifier(s_PropTempBlocksRT);
+
+            for (int mip = 1; mip < mipCount; mip++)
+            {
+                int prevW = Math.Max(1, source.width >> (mip - 1));
+                int prevH = Math.Max(1, source.height >> (mip - 1));
+                int mipW = Math.Max(1, source.width >> mip);
+                int mipH = Math.Max(1, source.height >> mip);
+                int blockCountX = (mipW + (int)bx - 1) / (int)bx;
+                int blockCountY = (mipH + (int)by - 1) / (int)by;
+
+                int currMipId = (mip & 1) == 1 ? s_PropTempMipA : s_PropTempMipB;
+                var currMipRT = new RenderTargetIdentifier(currMipId);
+                cmd.GetTemporaryRT(currMipId, CreateMipRTDescriptor(mipW, mipH, useFloat16Mip), FilterMode.Point);
+
+                if (mip == 1)
+                    cmd.SetComputeTextureParam(s_MipShader, mipKernel, s_PropMipSrcTex, source);
+                else
+                    cmd.SetComputeTextureParam(s_MipShader, mipKernel, s_PropMipSrcTex, new RenderTargetIdentifier(prevMipId));
+
+                cmd.SetComputeTextureParam(s_MipShader, mipKernel, s_PropMipDstTex, currMipRT);
+                cmd.SetComputeIntParam(s_MipShader, s_PropMipSrcWidth, prevW);
+                cmd.SetComputeIntParam(s_MipShader, s_PropMipSrcHeight, prevH);
+                cmd.SetComputeIntParam(s_MipShader, s_PropMipDstWidth, mipW);
+                cmd.SetComputeIntParam(s_MipShader, s_PropMipDstHeight, mipH);
+                cmd.SetComputeIntParam(s_MipShader, s_PropMipSrcLevel, 0);
+                cmd.SetComputeIntParam(s_MipShader, s_PropMipIsSRGBSrc, (mip == 1 && isSRGB) ? 1 : 0);
+                cmd.SetComputeIntParam(s_MipShader, s_PropMipIsAlphaWeighted, useAlphaWeight ? 1 : 0);
+                cmd.SetComputeIntParam(s_MipShader, s_PropMipIsHdr, isHdr ? 1 : 0);
+                cmd.DispatchCompute(s_MipShader, mipKernel, (mipW + 7) >> 3, (mipH + 7) >> 3, 1);
+
+                if (prevMipId != 0)
+                {
+                    cmd.ReleaseTemporaryRT(prevMipId);
+                }
+
+                bool encodeIsSRGB = isSRGB && textureType != TextureType.Normal;
+                cmd.GetTemporaryRT(s_PropTempBlocksRT, CreateBlockRTDescriptor(blockCountX, blockCountY), FilterMode.Point);
+                cmd.SetComputeTextureParam(s_Shader, kernel, s_PropSourceTex, currMipRT);
+                cmd.SetComputeTextureParam(s_Shader, kernel, s_PropDestTex, tempBlocksRT);
+                SetCommonUniforms(cmd, s_Shader, mipW, mipH, 0, blockCountX, blockCountY, 0, mode, encodeIsSRGB, useAlphaWeight, qualityTier);
+                cmd.DispatchCompute(s_Shader, kernel, (blockCountX + 7) >> 3, GetDispatchGroupsY(blockCountY, blockSize), 1);
+                cmd.CopyTexture(tempBlocksRT, 0, 0, 0, 0, blockCountX, blockCountY, dst, 0, mip, 0, 0);
+                cmd.ReleaseTemporaryRT(s_PropTempBlocksRT);
+
+                prevMipId = currMipId;
+            }
+
+            if (prevMipId != 0)
+            {
+                cmd.ReleaseTemporaryRT(prevMipId);
+            }
+        }
+
+        internal static bool CanUseDirectCompress(Texture source, TextureType textureType, BlockSize blockSize, bool includeMipmaps, bool generateMipmaps, out GraphicsFormat astcFormat, out int mipCount, out bool willGenMips)
+        {
+            astcFormat = GraphicsFormat.None;
+            mipCount = 1;
+            willGenMips = false;
+            if (!IsSupported || !IsInputSupported(source))
+                return false;
+
+            astcFormat = ResolveTargetAstcFormat(source.graphicsFormat, textureType, blockSize, out _, out _);
+            if (!Encoder.CanCreateAstcTexture(astcFormat))
+                return false;
+
+            mipCount = ResolveEffectiveMipCount(source, includeMipmaps, generateMipmaps, out willGenMips);
+            return CanUseDirectCopy(source.width, source.height, mipCount, blockSize, astcFormat);
+        }
+
         internal static Texture2D CompressToTexture(
             Texture source,
             TextureType textureType,
@@ -1160,8 +1266,8 @@ namespace Aperture.Astcenc.Runtime
             }
             int mipCount = ResolveEffectiveMipCount(source, includeMipmaps, generateMipmaps, out bool willGenMips);
 
-            // Fast zero-readback path when all mip dimensions align cleanly, no generated mips are needed, and GPU natively samples ASTC
-            if (!willGenMips && CanUseDirectCopy(source.width, source.height, mipCount, blockSize, astcFormat))
+            // Fast zero-readback path (including GPU-generated mipmaps) when all mip dimensions align cleanly and GPU natively samples ASTC
+            if (CanUseDirectCopy(source.width, source.height, mipCount, blockSize, astcFormat))
             {
                 TextureCreationFlags flags = TextureCreationFlags.DontInitializePixels | TextureCreationFlags.DontUploadUponCreate;
                 if (mipCount > 1)
@@ -1174,10 +1280,7 @@ namespace Aperture.Astcenc.Runtime
                     dst.name = source.name;
                     dst.Apply(false, true);
 
-                    for (int mip = 0; mip < mipCount; mip++)
-                    {
-                        Encode(cmd, source, dst, textureType, blockSize, quality, mip, mip, 0, 0, useAlphaWeight);
-                    }
+                    RecordDirectCompressToTexture(cmd, source, dst, textureType, blockSize, quality, mipCount, useAlphaWeight, willGenMips);
                     Graphics.ExecuteCommandBuffer(cmd);
                     return dst;
                 }
@@ -1192,7 +1295,7 @@ namespace Aperture.Astcenc.Runtime
                 }
             }
 
-            // Universal GPU path for generated mipmaps, non-aligned dimensions, full 1x1 mip tails, or non-ASTC desktop Editors
+            // Universal GPU path for non-aligned dimensions, full 1x1 mip tails, or non-ASTC desktop Editors
             using AstcRaw raw = CompressTextureSync(source, textureType, blockSize, quality, includeMipmaps, useAlphaWeight, generateMipmaps);
             if (raw == null)
                 return null;
@@ -1252,10 +1355,10 @@ namespace Aperture.Astcenc.Runtime
             int mipCount = ResolveEffectiveMipCount(source, includeMipmaps, generateMipmaps, out bool willGenMips);
             string texName = source.name;
 
-            // Zero-readback GPU-only path is already non-blocking on the CPU.
-            if (!willGenMips && CanUseDirectCopy(width, height, mipCount, blockSize, astcFormat))
+            // Zero-readback GPU-only path (including generated mipmaps) is already non-blocking on the CPU.
+            if (CanUseDirectCopy(width, height, mipCount, blockSize, astcFormat))
             {
-                return CompressToTexture(source, textureType, blockSize, quality, includeMipmaps, useAlphaWeight, false);
+                return CompressToTexture(source, textureType, blockSize, quality, includeMipmaps, useAlphaWeight, generateMipmaps);
             }
 
             // Non-blocking AsyncGPUReadback path for generated mipmaps, mipmapped, or non-block-aligned textures.
