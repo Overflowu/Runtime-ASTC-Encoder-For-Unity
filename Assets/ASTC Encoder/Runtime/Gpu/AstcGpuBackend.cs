@@ -397,6 +397,35 @@ namespace Aperture.Astcenc.Runtime
                 s_Shader.SetBuffer(bufKernel, s_PropDestBuffer, buf);
                 SetCommonUniforms(s_Shader, 4, 4, 0, 1, 1, 0, k_ModeLdrRgb, false, false, 1u);
                 s_Shader.Dispatch(bufKernel, 1, 1, 1);
+
+                if (EnsureMipShaderLoaded())
+                {
+                    RenderTexture mipRt = RenderTexture.GetTemporary(CreateMipRTDescriptor(2, 2, useFloat16: false));
+                    try
+                    {
+                        mipRt.Create();
+                        s_MipShader.SetInt(s_PropMipSrcWidth, 4);
+                        s_MipShader.SetInt(s_PropMipSrcHeight, 4);
+                        s_MipShader.SetInt(s_PropMipDstWidth, 2);
+                        s_MipShader.SetInt(s_PropMipDstHeight, 2);
+                        s_MipShader.SetInt(s_PropMipSrcLevel, 0);
+                        s_MipShader.SetInt(s_PropMipIsSRGBSrc, 0);
+                        s_MipShader.SetInt(s_PropMipIsAlphaWeighted, 0);
+                        s_MipShader.SetInt(s_PropMipIsHdr, 0);
+
+                        s_MipShader.SetTexture(s_MipKernelColor, s_PropMipSrcTex, dummySrc);
+                        s_MipShader.SetTexture(s_MipKernelColor, s_PropMipDstTex, mipRt);
+                        s_MipShader.Dispatch(s_MipKernelColor, 1, 1, 1);
+
+                        s_MipShader.SetTexture(s_MipKernelNormal, s_PropMipSrcTex, dummySrc);
+                        s_MipShader.SetTexture(s_MipKernelNormal, s_PropMipDstTex, mipRt);
+                        s_MipShader.Dispatch(s_MipKernelNormal, 1, 1, 1);
+                    }
+                    finally
+                    {
+                        RenderTexture.ReleaseTemporary(mipRt);
+                    }
+                }
             }
             finally
             {
@@ -857,6 +886,21 @@ namespace Aperture.Astcenc.Runtime
             return tcs.Task;
         }
 
+        private static void ValidateSliceIndex(Texture texture, int slice, string paramName)
+        {
+            if (slice < 0)
+                throw new ArgumentOutOfRangeException(paramName, slice, $"{paramName} must be non-negative.");
+
+            if (texture.dimension == TextureDimension.Tex2D && slice != 0)
+                throw new ArgumentOutOfRangeException(paramName, slice, $"{paramName} must be 0 for a 2D texture.");
+
+            if (texture.dimension == TextureDimension.Cube && slice >= 6)
+                throw new ArgumentOutOfRangeException(paramName, slice, $"{paramName} must be in [0, 5] for a Cubemap.");
+
+            if (texture is Texture2DArray texArray && slice >= texArray.depth)
+                throw new ArgumentOutOfRangeException(paramName, slice, $"{paramName} must be in [0, {texArray.depth - 1}] for Texture2DArray.");
+        }
+
         internal static void Encode(
             CommandBuffer cmd,
             Texture source,
@@ -878,10 +922,9 @@ namespace Aperture.Astcenc.Runtime
                 throw new ArgumentNullException(nameof(source));
             if (destination == null)
                 throw new ArgumentNullException(nameof(destination));
-            if (sourceSlice < 0)
-                throw new ArgumentOutOfRangeException(nameof(sourceSlice), sourceSlice, "sourceSlice must be non-negative.");
-            if (destSlice < 0)
-                throw new ArgumentOutOfRangeException(nameof(destSlice), destSlice, "destSlice must be non-negative.");
+
+            ValidateSliceIndex(source, sourceSlice, nameof(sourceSlice));
+            ValidateSliceIndex(destination, destSlice, nameof(destSlice));
 
             if (!IsSupported)
                 throw new NotSupportedException("GPU ASTC compression is not supported on this device.");

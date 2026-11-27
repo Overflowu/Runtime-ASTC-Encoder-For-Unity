@@ -1076,9 +1076,15 @@ namespace Aperture.Astcenc.Runtime
                 return null;
             }
 
-            if (compressedData == IntPtr.Zero || compressedLength <= 0 || width <= 0 || height <= 0)
+            if (compressedData == IntPtr.Zero || compressedLength <= 0 || width <= 0 || height <= 0 || width > 16384 || height > 16384)
             {
                 Debug.LogError("Invalid ASTC decompression input arguments.");
+                return null;
+            }
+
+            if (outputBitness != 8 && outputBitness != 16 && outputBitness != 32)
+            {
+                Debug.LogError($"Unsupported ASTC decompression outputBitness: {outputBitness}. Expected 8, 16, or 32.");
                 return null;
             }
 
@@ -1088,12 +1094,13 @@ namespace Aperture.Astcenc.Runtime
                 return null;
             }
 
-            int requiredBytes = CalculateMipByteLength(width, height, bx, by);
-            if (compressedLength < requiredBytes)
+            long requiredBytesLong = ((width + (long)bx - 1L) / (long)bx) * ((height + (long)by - 1L) / (long)by) * k_BytePerBlock;
+            if (requiredBytesLong <= 0 || requiredBytesLong > int.MaxValue || compressedLength < requiredBytesLong)
             {
-                Debug.LogError($"Compressed ASTC buffer ({compressedLength} bytes) is smaller than required ({requiredBytes} bytes) for {width}x{height} {blockSize}.");
+                Debug.LogError($"Compressed ASTC buffer ({compressedLength} bytes) is smaller than required ({requiredBytesLong} bytes) for {width}x{height} {blockSize}.");
                 return null;
             }
+            int requiredBytes = (int)requiredBytesLong;
 
             using AstcContext context = AstcContext.CreateDecompressor(blockSize, srgb, isHdr, threadCount);
             if (context == null)
