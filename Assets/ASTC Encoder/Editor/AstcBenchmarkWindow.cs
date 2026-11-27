@@ -163,7 +163,7 @@ namespace Aperture.Astcenc.Editor
             bool isHdr = GraphicsFormatUtility.IsFloatFormat(m_SourceTexture.graphicsFormat);
             bool isSrgb = m_TextureType == TextureType.Default && GraphicsFormatUtility.IsSRGBFormat(m_SourceTexture.graphicsFormat);
 
-            Texture2D readableSource = CreateReadableCopy(m_SourceTexture, isSrgb);
+            Texture2D readableSource = CreateReadableCopy(m_SourceTexture, isSrgb, isHdr);
             try
             {
                 Color[] refPixels = readableSource.GetPixels(0);
@@ -213,7 +213,7 @@ namespace Aperture.Astcenc.Editor
                 BlockSize = m_BlockSize,
                 Quality = m_Quality,
                 IncludeMipmaps = false,
-                GenerateMipmaps = m_GenerateMipmaps && backend == EncodeBackend.Gpu,
+                GenerateMipmaps = false,
                 UseAlphaWeight = m_UseAlphaWeight,
                 UsePerceptual = m_UsePerceptual,
                 ThreadCount = Math.Max(1, Environment.ProcessorCount / 2),
@@ -239,11 +239,25 @@ namespace Aperture.Astcenc.Editor
             }
 
             Color[] decPixels = UnpackDecodedPixels(decodedRgba, width * height, isHdr);
+            if (m_TextureType == TextureType.Normal)
+            {
+                // ASTC Normal maps are encoded in GGGR layout (R/G/B = ny, A = nx); reconstruct tangent-space RGB for metrics & preview.
+                for (int i = 0; i < decPixels.Length; i++)
+                {
+                    float nx = decPixels[i].a;
+                    float ny = decPixels[i].g;
+                    float vx = nx * 2f - 1f;
+                    float vy = ny * 2f - 1f;
+                    float vz = Mathf.Sqrt(Mathf.Max(0f, 1f - vx * vx - vy * vy));
+                    decPixels[i] = new Color(nx, ny, vz * 0.5f + 0.5f, 1f);
+                }
+            }
+
             var result = ComputeMetrics(refPixels, decPixels, width, height, m_TextureType == TextureType.Normal);
             result.Label = label;
             result.EncodeMs = sw.Elapsed.TotalMilliseconds;
             result.CompressedBytes = raw.Length;
-            result.UncompressedBytes = width * height * 4;
+            result.UncompressedBytes = width * height * (isHdr ? 16 : 4);
             result.DecodedPreview = BuildPreviewTexture(decPixels, width, height, m_ShowAlphaOnly);
             result.HeatmapPreview = BuildHeatmapTexture(refPixels, decPixels, width, height, m_HeatmapGain);
             return result;
@@ -259,8 +273,9 @@ namespace Aperture.Astcenc.Editor
             if (string.IsNullOrEmpty(path))
                 return;
 
+            bool isHdr = GraphicsFormatUtility.IsFloatFormat(m_SourceTexture.graphicsFormat);
             bool isSrgb = m_TextureType == TextureType.Default && GraphicsFormatUtility.IsSRGBFormat(m_SourceTexture.graphicsFormat);
-            Texture2D readableSource = CreateReadableCopy(m_SourceTexture, isSrgb);
+            Texture2D readableSource = CreateReadableCopy(m_SourceTexture, isSrgb, isHdr);
             try
             {
                 var options = new AstcCompressOptions
@@ -333,20 +348,18 @@ namespace Aperture.Astcenc.Editor
             }
         }
 
-        private static Texture2D CreateReadableCopy(Texture2D source, bool srgb)
+        private static Texture2D CreateReadableCopy(Texture2D source, bool srgb, bool isHdr)
         {
-            var rt = RenderTexture.GetTemporary(
-                source.width,
-                source.height,
-                0,
-                RenderTextureFormat.ARGB32,
-                srgb ? RenderTextureReadWrite.sRGB : RenderTextureReadWrite.Linear);
+            var rtFormat = isHdr ? RenderTextureFormat.ARGBFloat : RenderTextureFormat.ARGB32;
+            var readWrite = (!isHdr && srgb) ? RenderTextureReadWrite.sRGB : RenderTextureReadWrite.Linear;
+            var rt = RenderTexture.GetTemporary(source.width, source.height, 0, rtFormat, readWrite);
             RenderTexture prev = RenderTexture.active;
             try
             {
                 Graphics.Blit(source, rt);
                 RenderTexture.active = rt;
-                var copy = new Texture2D(source.width, source.height, TextureFormat.RGBA32, false, !srgb);
+                var texFormat = isHdr ? TextureFormat.RGBAFloat : TextureFormat.RGBA32;
+                var copy = new Texture2D(source.width, source.height, texFormat, false, isHdr || !srgb);
                 copy.ReadPixels(new Rect(0, 0, source.width, source.height), 0, 0);
                 copy.Apply(false, false);
                 return copy;
