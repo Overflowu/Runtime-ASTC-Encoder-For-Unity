@@ -94,6 +94,26 @@ namespace Aperture.Astcenc.Runtime
             }
 
             cancellationToken.ThrowIfCancellationRequested();
+
+            if (Encoder.CanCreateAstcTexture(targetFormat))
+            {
+                TextureCreationFlags flags = mipCount > 1 ? TextureCreationFlags.MipChain : TextureCreationFlags.None;
+                var tex = new Texture2D(width, height, targetFormat, mipCount, flags);
+                try
+                {
+                    if (!string.IsNullOrEmpty(texName))
+                        tex.name = texName;
+                    tex.LoadRawTextureData(raw.Data, raw.Length);
+                    tex.Apply(false, options.MakeNoLongerReadable);
+                    return tex;
+                }
+                catch
+                {
+                    UnityEngine.Object.DestroyImmediate(tex);
+                    throw;
+                }
+            }
+
             return AstcKtxContainer.LoadTexture(ktxBytes, options.MakeNoLongerReadable, texName);
         }
 
@@ -149,9 +169,20 @@ namespace Aperture.Astcenc.Runtime
                     File.WriteAllBytes(tempPath, data);
                     if (File.Exists(path))
                     {
-                        File.Delete(path);
+                        File.Replace(tempPath, path, null);
                     }
-                    File.Move(tempPath, path);
+                    else
+                    {
+                        try
+                        {
+                            File.Move(tempPath, path);
+                        }
+                        catch (IOException) when (File.Exists(path))
+                        {
+                            // Another concurrent writer created the cache file first; replace atomically.
+                            File.Replace(tempPath, path, null);
+                        }
+                    }
                 }
                 catch
                 {
