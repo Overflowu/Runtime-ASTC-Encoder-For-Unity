@@ -996,7 +996,7 @@ namespace Aperture.Astcenc.Runtime
             if (mipCount > 1)
                 flags |= TextureCreationFlags.MipChain;
 
-            var dst = new Cubemap(source.width, astcFormat, mipCount, flags);
+            var dst = new Cubemap(source.width, astcFormat, flags, mipCount);
             var cmd = new CommandBuffer { name = "AstcGpuCompressCubemap" };
             try
             {
