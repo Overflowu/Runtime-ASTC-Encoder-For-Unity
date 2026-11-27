@@ -384,6 +384,7 @@ jobs:
         run: |
           mkdir -p "Assets/ASTC Encoder/Plugins/Linux/x86_64"
           cp dist/Plugins/x64/astcenc-sse4.1-shared.dll "Assets/ASTC Encoder/Plugins/x64/"
+          cp dist/Plugins/x64/astcenc-avx2-shared.dll "Assets/ASTC Encoder/Plugins/x64/"
           cp dist/Plugins/Linux/x86_64/libastcenc-sse4.1-shared.so "Assets/ASTC Encoder/Plugins/Linux/x86_64/"
           cp dist/Plugins/Mac/libastcenc-shared.dylib "Assets/ASTC Encoder/Plugins/Mac/"
           cp dist/Plugins/iOS/libastcenc-neon-static.a "Assets/ASTC Encoder/Plugins/iOS/"
