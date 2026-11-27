@@ -1361,5 +1361,122 @@ namespace Aperture.Astcenc.Runtime
                 }
             }, cancellationToken);
         }
+
+        internal static unsafe bool CompressRawPixelsInto(
+            IntPtr pixelPtr,
+            int pixelByteLength,
+            IntPtr destPtr,
+            int destCapacity,
+            int width,
+            int height,
+            GraphicsFormat sourceFormat,
+            TextureType textureType,
+            BlockSize blockSize,
+            CompressQuality quality,
+            int threadCount,
+            bool useAlphaWeight,
+            bool usePerceptual,
+            uint alphaScaleRadius,
+            bool useUnityJobSystem,
+            out int bytesWritten)
+        {
+            bytesWritten = 0;
+            if (!IsSupported || pixelPtr == IntPtr.Zero || destPtr == IntPtr.Zero || width <= 0 || height <= 0)
+                return false;
+
+            int bpp = GetSourcePixelByteSize(sourceFormat);
+            if (bpp <= 0 || !IsSupportGraphicFormat(sourceFormat))
+                return false;
+
+            long requiredSrcBytes = (long)width * height * bpp;
+            if (requiredSrcBytes <= 0 || pixelByteLength < requiredSrcBytes)
+                return false;
+
+            if (!Encoder.GetBlockSize(blockSize, out uint bx, out uint by, out _))
+                return false;
+
+            long expectedOutBytes = ((width + (long)bx - 1L) / (long)bx) * ((height + (long)by - 1L) / (long)by) * k_BytePerBlock;
+            if (expectedOutBytes <= 0 || expectedOutBytes > destCapacity)
+                return false;
+
+            using AstcContext ctx = AstcContext.Create(sourceFormat, textureType, blockSize, quality, threadCount, useAlphaWeight, usePerceptual, alphaScaleRadius, useUnityJobSystem: useUnityJobSystem);
+            if (ctx == null)
+                return false;
+
+            astcenc_swizzle swizzle = GetSwizzle(sourceFormat, textureType);
+            int bitness = GetBitness(sourceFormat);
+            bool direct4Channel = IsDirect4ChannelFormat(sourceFormat);
+
+            astcenc_image image = new astcenc_image();
+            try
+            {
+                if (direct4Channel)
+                {
+                    if (bitness == 8) image.LoadFromDirectPtr((RGBA8*)pixelPtr, width, height, 8);
+                    else if (bitness == 16) image.LoadFromDirectPtr((RGBA16F*)pixelPtr, width, height, 16);
+                    else image.LoadFromDirectPtr((RGBA32F*)pixelPtr, width, height, 32);
+                }
+                else
+                {
+                    // Non-4-channel formats expand into a single-mip working image
+                    using AstcRaw tmp = CompressRawPixels(pixelPtr, pixelByteLength, width, height, sourceFormat, textureType, blockSize, quality, threadCount, useAlphaWeight, usePerceptual, alphaScaleRadius, useUnityJobSystem);
+                    if (tmp == null || tmp.Length > destCapacity)
+                        return false;
+                    UnsafeUtility.MemCpy((void*)destPtr, (void*)tmp.Data, tmp.Length);
+                    bytesWritten = tmp.Length;
+                    return true;
+                }
+
+                astcenc_error status = ctx.CompressSingleImage(ref image, ref swizzle, destPtr, (int)expectedOutBytes, CancellationToken.None);
+                if (status != astcenc_error.ASTCENC_SUCCESS)
+                    return false;
+
+                bytesWritten = (int)expectedOutBytes;
+                return true;
+            }
+            finally
+            {
+                image.Release(ownsSliceMemory: false);
+            }
+        }
+
+        private static bool IsDirect4ChannelFormat(GraphicsFormat format)
+        {
+            switch (format)
+            {
+                case GraphicsFormat.R8G8B8A8_UNorm:
+                case GraphicsFormat.R8G8B8A8_SRGB:
+                case GraphicsFormat.B8G8R8A8_UNorm:
+                case GraphicsFormat.B8G8R8A8_SRGB:
+                case GraphicsFormat.R16G16B16A16_SFloat:
+                case GraphicsFormat.R32G32B32A32_SFloat:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private static int GetBitness(GraphicsFormat format)
+        {
+            switch (format)
+            {
+                case GraphicsFormat.R16_SFloat:
+                case GraphicsFormat.R16G16_SFloat:
+                case GraphicsFormat.R16G16B16_SFloat:
+                case GraphicsFormat.R16G16B16A16_SFloat:
+                    return 16;
+                case GraphicsFormat.R16_UNorm:
+                case GraphicsFormat.R16G16_UNorm:
+                case GraphicsFormat.R16G16B16_UNorm:
+                case GraphicsFormat.R16G16B16A16_UNorm:
+                case GraphicsFormat.R32_SFloat:
+                case GraphicsFormat.R32G32_SFloat:
+                case GraphicsFormat.R32G32B32_SFloat:
+                case GraphicsFormat.R32G32B32A32_SFloat:
+                    return 32;
+                default:
+                    return 8;
+            }
+        }
     }
 }

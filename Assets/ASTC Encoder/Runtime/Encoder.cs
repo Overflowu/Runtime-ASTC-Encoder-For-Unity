@@ -611,6 +611,41 @@ namespace Aperture.Astcenc.Runtime
         }
 
         /// <summary>
+        /// Compresses raw pixel bytes directly into a caller-owned <see cref="Unity.Collections.NativeArray{T}"/>
+        /// with zero unmanaged heap allocations for 4-channel formats (RGBA8/BGRA8/RGBA16F/RGBA32F).
+        /// Ideal for high-frequency webcam/streaming loops reusing a persistent destination buffer.
+        /// </summary>
+        public static unsafe bool CompressRawPixelsInto(
+            Unity.Collections.NativeArray<byte> rawPixels,
+            Unity.Collections.NativeArray<byte> destination,
+            int width,
+            int height,
+            GraphicsFormat sourceFormat,
+            AstcCompressOptions options,
+            out int bytesWritten)
+        {
+            void* srcPtr = Unity.Collections.LowLevel.Unsafe.NativeArrayUnsafeUtility.GetUnsafeReadOnlyPtr(rawPixels);
+            void* dstPtr = Unity.Collections.LowLevel.Unsafe.NativeArrayUnsafeUtility.GetUnsafePtr(destination);
+            return AstcCpuBackend.CompressRawPixelsInto(
+                (IntPtr)srcPtr,
+                rawPixels.Length,
+                (IntPtr)dstPtr,
+                destination.Length,
+                width,
+                height,
+                sourceFormat,
+                options.TextureType,
+                options.BlockSize,
+                options.Quality,
+                options.ThreadCount,
+                options.UseAlphaWeight,
+                options.UsePerceptual,
+                options.AlphaScaleRadius,
+                options.UseUnityJobSystem,
+                out bytesWritten);
+        }
+
+        /// <summary>
         /// Compresses a managed raw pixel byte array directly on the CPU without creating a Unity <see cref="Texture2D"/>.
         /// Call Dispose() on the returned <see cref="AstcRaw"/> after use.
         /// </summary>

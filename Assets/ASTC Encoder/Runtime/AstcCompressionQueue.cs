@@ -217,26 +217,110 @@ namespace Aperture.Astcenc.Runtime
             if (m_Disposed)
                 return;
 
-            // 1. Dispatch GPU jobs within the frame texel budget
+            // 1. Dispatch GPU jobs within the frame texel budget, batching direct-copy jobs into a single CommandBuffer.
             long remainingBudget = Math.Max(1L, MaxGpuTexelsPerFrame);
             bool dispatchedAnyGpu = false;
+            UnityEngine.Rendering.CommandBuffer batchCmd = null;
+            List<(PendingJob Job, Texture2D Result)> batchedResults = null;
 
-            while (TryPeekHighestPriority(m_GpuQueues, out PendingJob nextGpu))
+            try
             {
-                if (nextGpu.CancellationToken.IsCancellationRequested)
+                while (TryPeekHighestPriority(m_GpuQueues, out PendingJob nextGpu))
                 {
+                    if (nextGpu.CancellationToken.IsCancellationRequested)
+                    {
+                        DequeueHighestPriority(m_GpuQueues);
+                        nextGpu.Cancel();
+                        continue;
+                    }
+
+                    if (dispatchedAnyGpu && nextGpu.TexelCost > remainingBudget)
+                        break;
+
                     DequeueHighestPriority(m_GpuQueues);
-                    nextGpu.Cancel();
-                    continue;
+                    dispatchedAnyGpu = true;
+                    remainingBudget -= nextGpu.TexelCost;
+
+                    if (nextGpu.OutputTexture
+                        && nextGpu.Source != null
+                        && AstcGpuBackend.CanUseDirectCompress(
+                            nextGpu.Source,
+                            nextGpu.Options.TextureType,
+                            nextGpu.Options.BlockSize,
+                            nextGpu.Options.IncludeMipmaps,
+                            nextGpu.Options.GenerateMipmaps,
+                            out GraphicsFormat astcFormat,
+                            out int mipCount,
+                            out bool willGenMips))
+                    {
+                        TextureCreationFlags flags = TextureCreationFlags.DontInitializePixels | TextureCreationFlags.DontUploadUponCreate;
+                        if (mipCount > 1)
+                            flags |= TextureCreationFlags.MipChain;
+
+                        var dst = new Texture2D(nextGpu.Source.width, nextGpu.Source.height, astcFormat, mipCount, flags);
+                        try
+                        {
+                            dst.name = nextGpu.Source.name;
+                            dst.Apply(false, true);
+
+                            if (batchCmd == null)
+                            {
+                                batchCmd = new UnityEngine.Rendering.CommandBuffer { name = "AstcQueueBatch" };
+                                batchedResults = new List<(PendingJob, Texture2D)>();
+                            }
+
+                            AstcGpuBackend.RecordDirectCompressToTexture(
+                                batchCmd,
+                                nextGpu.Source,
+                                dst,
+                                nextGpu.Options.TextureType,
+                                nextGpu.Options.BlockSize,
+                                nextGpu.Options.Quality,
+                                mipCount,
+                                nextGpu.Options.UseAlphaWeight,
+                                willGenMips);
+                            batchedResults.Add((nextGpu, dst));
+                        }
+                        catch (Exception ex)
+                        {
+                            UnityEngine.Object.DestroyImmediate(dst);
+                            nextGpu.SetException(ex);
+                        }
+                    }
+                    else
+                    {
+                        RunGpuJob(nextGpu);
+                    }
                 }
 
-                if (dispatchedAnyGpu && nextGpu.TexelCost > remainingBudget)
-                    break;
-
-                DequeueHighestPriority(m_GpuQueues);
-                dispatchedAnyGpu = true;
-                remainingBudget -= nextGpu.TexelCost;
-                RunGpuJob(nextGpu);
+                if (batchCmd != null && batchedResults != null && batchedResults.Count > 0)
+                {
+                    Graphics.ExecuteCommandBuffer(batchCmd);
+                    for (int i = 0; i < batchedResults.Count; i++)
+                    {
+                        var (job, tex) = batchedResults[i];
+                        if (!job.TextureTcs.TrySetResult(tex) && tex != null)
+                        {
+                            UnityEngine.Object.DestroyImmediate(tex);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                if (batchedResults != null)
+                {
+                    for (int i = 0; i < batchedResults.Count; i++)
+                    {
+                        var (job, tex) = batchedResults[i];
+                        if (tex != null) UnityEngine.Object.DestroyImmediate(tex);
+                        job.SetException(ex);
+                    }
+                }
+            }
+            finally
+            {
+                batchCmd?.Release();
             }
 
             // 2. Dispatch CPU jobs up to MaxConcurrentCpuTasks
