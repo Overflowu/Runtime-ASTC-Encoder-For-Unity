@@ -15,17 +15,17 @@ A **runtime ASTC texture compression library** for Unity (Unity Package: `com.ap
 - **Flexible Workflows**:
   - In-place compression and GPU upload (`Texture2D.Compress`)
   - One-shot sync / async creation of a new compressed texture (`Texture.CompressToTexture` / `CompressToTextureAsync`, supporting `RenderTexture`, zero-readback copy, `AsyncGPUReadback`, and integrated **GPU mipmap generation** via `AstcCompressOptions.GenerateMipmaps`)
-  - Extended texture dimensions & raw buffers: `Encoder.CompressCubemap`, `Encoder.CompressTexture2DArray`, `sourceSlice`/`destSlice` on `Encoder.Encode`, and `Encoder.CompressRawPixels` / `CompressRawPixelsAsync` (`NativeArray<byte>` & `byte[]`, no `Texture2D` required)
-  - **Frame-Budgeted Compression Queue & Context Pool** (`AstcCompressionQueue`): priority scheduling (`High` / `Normal` / `Low`), `MaxGpuTexelsPerFrame`, `MaxConcurrentCpuTasks`, and pooled `AstcContext` with `parentContext` table sharing
-  - **Standard KTX v1 Container & Persistent Disk Cache**: `AstcKtxContainer` / `Encoder.EncodeToKTX` / `EncodeToKTXAsync` / `LoadFromKTX` (preserving full mipmap chains and UNorm/sRGB/HDR metadata with CPU decode fallback) and atomic `AstcDiskCache` (`TryLoad`, `TryLoadAsync`, `CompressAndSaveAsync`, `LoadOrCompressAsync`)
-  - **Unity Editor Benchmark & Quality Inspector** (`Window/ASTC Encoder/Benchmark & Inspector`): side-by-side CPU vs GPU comparison, decoded preview, amplified error heatmaps, PSNR / RMSE / Normal Angular Error, timing, memory savings, and `.ktx` / `.astc` export
+  - Extended texture dimensions & raw buffers: `Encoder.CompressCubemap`, `Encoder.CompressTexture2DArray`, `sourceSlice`/`destSlice` on `Encoder.Encode`, `Encoder.CompressRawPixels` / `CompressRawPixelsAsync` (`NativeArray<byte>` & `byte[]`), and zero-allocation `Encoder.CompressRawPixelsInto` (writes directly into a caller-owned `NativeArray<byte>`)
+  - **Frame-Budgeted Compression Queue & Context Pool** (`AstcCompressionQueue`): priority scheduling (`High` / `Normal` / `Low`), `MaxGpuTexelsPerFrame`, `MaxConcurrentCpuTasks`, **single-`CommandBuffer` per-frame GPU batching**, and pooled `AstcContext` with safe `parentContext` table sharing
+  - **Standard KTX v1 Container & Persistent Disk Cache**: `AstcKtxContainer` / `Encoder.EncodeToKTX` / `EncodeToKTXAsync` / `LoadFromKTX` (preserving full mipmap chains and UNorm/sRGB/HDR metadata with CPU decode fallback) and truly atomic `AstcDiskCache` (`File.Replace` persistence + zero-copy direct `AstcRaw` upload)
+  - **Unity Editor Benchmark & Quality Inspector** (`Window/ASTC Encoder/Benchmark & Inspector`): side-by-side CPU vs GPU comparison, decoded preview, amplified error heatmaps, PSNR / RMSE / Normal Angular Error (with GGGR unpacking & HDR float preservation), timing, memory savings, and `.ktx` / `.astc` export
   - Low-level `CommandBuffer` recording (`Encoder.Encode`, ideal for batching, Async Compute, and dynamic atlas / Virtual Texture sub-region updates)
   - Synchronous / asynchronous raw unmanaged ASTC buffer output (`CompressTexture` / `CompressTextureAsync` → `AstcRaw`)
   - Unified `AstcCompressOptions` struct overloads (`Default`, `NormalMap`, `Transparent` presets) and reusable `AstcContext` (with `astcenc 5.x` `parentContext` sharing)
   - Synchronous / asynchronous standard `.astc` file byte export (`EncodeToASTC` / `EncodeToASTCAsync`, mip 0 only) and CPU software decompression (`Decompress` / `DecompressToTexture` / `DecompressAstcFile`)
 - **High Performance & Low GC**:
-  - **GPU Backend**: Dedicated lightweight `ASTC_FAST_ONLY` kernels (minimal VGPR pressure for `Fastest`/`Fast`), **on-chip packed RGBA8 pixel cache** for `<= 6x6` LDR blocks, pure-integer ALU BISE encoding (zero large constant tables), integrated linear/sRGB & normal-renormalizing GPU mipmap generator (`AstcGpuMipGenerator.compute`), lossless Void-Extent fast path, dedicated `CEM 4` + angular-error Dual-Plane Normal encoding, dynamic-CCS Dual-Plane for both RGB (ORM/MRAO) and RGBA, anisotropic weight grids (`6x4`/`4x6`/`8x4`/`4x8`), HDR CEM 11 high-precision delta modes, post-quantization ideal endpoint refit, High-tier 2-Partition search, LOH-free `AsyncGPUReadback` sync readback, and `PreloadGpu` / `ReleaseGpuCache`.
-  - **CPU Backend**: **Zero-copy direct pointer binding** (`NativeSlice`) for 4-channel `RGBA8` / `RGBA16F` / `RGBA32F` formats, **compact main-thread `MemCpy` snapshot with lazy per-mip worker-thread expansion** in async mode (up to 8× lower peak memory), optional **Unity Job System (`IJobParallelFor`)** scheduling (`UseUnityJobSystem`), direct `unsafe` pointer pixel expansion with zero heap allocations, multi-core parallelism, and `CancellationToken` support.
+  - **GPU Backend**: Dedicated lightweight `ASTC_FAST_ONLY` kernels, **per-block `ASTC_MAX_GRID` VGPR reduction** (`4x4`→16 / `5x5`→25 / `>=6x6`→36), **row-level early-exit candidate pruning**, **on-chip packed RGBA8 pixel cache** for `<= 6x6` LDR blocks, **fast zero-`pow()` `sqrt` sRGB approximation** (`0/256` 8-bit round-trip error), **`[numthreads(8, 4, 1)]` occupancy tuning for `>= 8x8` blocks**, **single-`CommandBuffer` zero-readback GPU mipmap generation + ASTC encoding** (`AstcGpuMipGenerator.compute` with odd-NPOT edge coverage & normal renormalization), pure-integer ALU BISE encoding, lossless Void-Extent fast path, dedicated `CEM 4` + angular-error Dual-Plane Normal encoding, dynamic-CCS Dual-Plane for both RGB (ORM/MRAO) and RGBA, anisotropic weight grids (`6x4`/`4x6`/`8x4`/`4x8`), HDR CEM 11 high-precision delta modes, post-quantization ideal endpoint refit, High-tier 2-Partition search, LOH-free `AsyncGPUReadback` sync readback, and `PreloadGpu` (warms encoder + mipmap kernels) / `ReleaseGpuCache`.
+  - **CPU Backend**: **Windows x64 runtime AVX2 auto-dispatch** (with automatic SSE4.1 fallback), **zero-copy direct pointer binding** (`NativeSlice`) for 4-channel `RGBA8` / `RGBA16F` / `RGBA32F` formats, **zero-allocation `CompressRawPixelsInto`**, **compact main-thread `MemCpy` snapshot with lazy per-mip worker-thread expansion** in async mode (up to 8× lower peak memory), optional **Unity Job System (`IJobParallelFor`)** scheduling (`UseUnityJobSystem`), direct `unsafe` pointer pixel expansion with zero heap allocations, multi-core parallelism, and `CancellationToken` support.
 - **Broad Input Format, Full Mipmap & Verification Support**:
   - Supports 24 uncompressed `GraphicsFormat`s (GPU backend also supports 2D `RenderTexture` formats such as `B10G11R11_UFloatPack32`), covering **LDR (8-bit UNorm / sRGB, 16-bit UNorm)** and **HDR (16-bit / 32-bit Float)**.
   - Full per-level mipmap chain compression (including non-square and non-power-of-two textures), plus golden EditMode NUnit tests (`Aperture.Astcenc.Tests`) and CI shader/metadata verification.
@@ -37,19 +37,21 @@ A **runtime ASTC texture compression library** for Unity (Unity Package: `com.ap
 
 ## Supported Platforms & Native Libraries
 
-Prebuilt `astc-encoder v5.7.1` native libraries live under `Assets/ASTC Encoder/Plugins/` (tracked with Git LFS):
+Prebuilt `astc-encoder v5.7.1` native libraries live under `Assets/ASTC Encoder/Plugins/` (tracked with Git LFS; additional CI artifacts including Windows AVX2, Linux x64, and iOS `astcenc.xcframework` are built automatically by GitHub Actions):
 
 | Platform | Architecture / Target | Native Binary | P/Invoke `LibraryName` | Build Notes |
 | :--- | :--- | :--- | :--- | :--- |
-| **iOS** | ARM64 (static library, iOS 12.0+) | `Plugins/iOS/libastcenc-neon-static.a` | `__Internal` | ARM NEON |
+| **iOS** | ARM64 (iOS 12.0+) + XCFramework (CI) | `Plugins/iOS/libastcenc-neon-static.a` | `__Internal` | ARM NEON (CI also builds Device+Simulator `astcenc.xcframework`) |
 | **Android** | `arm64-v8a` (API 21+) | `Plugins/Android/arm64-v8a/libastcenc-neon-shared.so` | `libastcenc-neon-shared` | ARM NEON / `c++_static` / 16KB page aligned |
 | **Android** | `armeabi-v7a` (API 21+) | `Plugins/Android/armeabi-v7a/libastcenc-none-shared.so` | `libastcenc-none-shared` | NONE SIMD / `c++_static` / 16KB page aligned |
 | **macOS** | Editor & Standalone Universal (11.0+) | `Plugins/Mac/libastcenc-shared.dylib` | `libastcenc-shared` | Universal (`x86_64` SSE4.1 + `x86_64h` AVX2 + `arm64` NEON) |
-| **Windows** | Editor & Standalone x64 | `Plugins/x64/astcenc-sse4.1-shared.dll` | `astcenc-sse4.1-shared.dll` | SSE4.1 / static MSVC runtime (`/MT`) |
+| **Windows** | Editor & Standalone x64 | `Plugins/x64/astcenc-sse4.1-shared.dll` (+ optional `astcenc-avx2-shared.dll`) | Runtime AVX2 → SSE4.1 auto-dispatch | Static MSVC runtime (`/MT`) |
+| **Linux** | Editor & Standalone x64 (CI) | `Plugins/Linux/x86_64/libastcenc-sse4.1-shared.so` | `libastcenc-sse4.1-shared` | SSE4.1 (built by GitHub Actions) |
 
 > **Notes**:
 > - On Android, runtime dispatch automatically selects `arm64-v8a` (NEON) or `armeabi-v7a` (NONE) based on `IntPtr.Size == 8`.
-> - Platforms without prebuilt native CPU libraries (e.g., Linux / WebGL) still compile cleanly; the CPU backend accurately reports itself as unavailable, while the GPU backend remains usable wherever Compute Shaders are supported.
+> - On Windows x64, runtime dispatch probes CPU AVX2 support (`IsProcessorFeaturePresent(40)`) and automatically uses `astcenc-avx2-shared.dll` if deployed, seamlessly falling back to `astcenc-sse4.1-shared.dll`.
+> - Platforms without native CPU libraries (e.g., WebGL) still compile cleanly; `Encoder.IsCpuSupported` accurately reports `false`, while the GPU backend remains usable wherever Compute Shaders are supported.
 
 ---
 

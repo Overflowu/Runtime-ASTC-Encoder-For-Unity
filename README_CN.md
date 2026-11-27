@@ -15,17 +15,17 @@
 - **多种使用形态**：
   - 原地压缩并上传 GPU（`Texture2D.Compress`）
   - 一站式同步 / 异步生成新压缩纹理（`Texture.CompressToTexture` / `CompressToTextureAsync`，支持 `RenderTexture`、零回读拷贝、`AsyncGPUReadback` 与 **`AstcCompressOptions.GenerateMipmaps` GPU 一体化 Mipmap 生成**）
-  - 扩展纹理维度与原始像素直压：`Encoder.CompressCubemap`、`Encoder.CompressTexture2DArray`、`Encoder.Encode` 的 `sourceSlice`/`destSlice` 参数，以及无需创建 `Texture2D` 的 `Encoder.CompressRawPixels` / `CompressRawPixelsAsync`（支持 `NativeArray<byte>` 与 `byte[]`）
-  - **帧预算调度队列与上下文池（`AstcCompressionQueue`）**：支持 `High` / `Normal` / `Low` 优先级、`MaxGpuTexelsPerFrame` 每帧 GPU 像素预算、`MaxConcurrentCpuTasks` 并发上限以及基于 `parentContext` 表共享的 `AstcContext` 池化复用
-  - **标准 KTX v1 容器与持久化磁盘缓存**：`AstcKtxContainer` / `Encoder.EncodeToKTX` / `EncodeToKTXAsync` / `LoadFromKTX`（保留完整 Mipmap 链与 UNorm/sRGB/HDR 元数据，非 ASTC 设备自动 CPU 解压回退），配合原子写入的 `AstcDiskCache`（`TryLoad` / `TryLoadAsync` / `CompressAndSaveAsync` / `LoadOrCompressAsync`）
-  - **Unity Editor 可视化对比与质检窗口（`Window/ASTC Encoder/Benchmark & Inspector`）**：同屏对比 CPU 与 GPU 解码结果、放大误差热力图、PSNR / RMSE / 法线角度误差、耗时、显存节省率，并支持一键导出 `.ktx` / `.astc`
+  - 扩展纹理维度与原始像素直压：`Encoder.CompressCubemap`、`Encoder.CompressTexture2DArray`、`Encoder.Encode` 的 `sourceSlice`/`destSlice` 参数、`Encoder.CompressRawPixels` / `CompressRawPixelsAsync`（支持 `NativeArray<byte>` 与 `byte[]`），以及零分配的 `Encoder.CompressRawPixelsInto`（直接写入调用方复用的 `NativeArray<byte>`）
+  - **帧预算调度队列与上下文池（`AstcCompressionQueue`）**：支持 `High` / `Normal` / `Low` 优先级、`MaxGpuTexelsPerFrame` 每帧 GPU 像素预算、`MaxConcurrentCpuTasks` 并发上限、**单帧单条 `CommandBuffer` GPU 合批提交**以及带安全生命周期管理的 `parentContext` 表共享上下文池
+  - **标准 KTX v1 容器与持久化磁盘缓存**：`AstcKtxContainer` / `Encoder.EncodeToKTX` / `EncodeToKTXAsync` / `LoadFromKTX`（保留完整 Mipmap 链与 UNorm/sRGB/HDR 元数据，非 ASTC 设备自动 CPU 解压回退），配合真正原子替换（`File.Replace`）的 `AstcDiskCache`（直传 `AstcRaw` 零冗余拷贝）
+  - **Unity Editor 可视化对比与质检窗口（`Window/ASTC Encoder/Benchmark & Inspector`）**：同屏对比 CPU 与 GPU 解码结果、放大误差热力图、PSNR / RMSE / 法线角度误差（支持 GGGR 解包与 HDR 浮点保留）、耗时、显存节省率，并支持一键导出 `.ktx` / `.astc`
   - 底层 `CommandBuffer` 录制（`Encoder.Encode`，支持批处理、Async Compute 与动态图集/Virtual Texture 子区域更新）
   - 同步 / 异步获取非托管原始 ASTC 数据缓冲（`CompressTexture` / `CompressTextureAsync` → `AstcRaw`）
   - 统一 `AstcCompressOptions` 结构体配置（含 `Default` / `NormalMap` / `Transparent` 预设）与可复用 `AstcContext`（支持 `astcenc 5.x` `parentContext` 共享）
   - 同步 / 异步导出标准 `.astc` 字节数组（`EncodeToASTC` / `EncodeToASTCAsync`，仅编码 Mip 0）与 CPU 软件解压（`Decompress` / `DecompressToTexture` / `DecompressAstcFile`）
 - **高性能低 GC 设计**：
-  - **GPU 后端**：独立轻量化 `ASTC_FAST_ONLY` Kernel（极低 VGPR 寄存器占用）、**`<= 6x6` LDR 块片上 RGBA8 像素缓存**（消除多轮候选评估的重复纹理加载与 sRGB `pow`）、纯整数 ALU BISE 编码（零大常量表）、集成线性/sRGB 与法线归一化 GPU Mipmap 生成器（`AstcGpuMipGenerator.compute`）、Void-Extent 纯色块零损快速路径、Normal 专用 `CEM 4` + 切线空间角度误差 Dual-Plane、同时支持 RGB（ORM/MRAO）与 RGBA 的动态 CCS Dual-Plane、各向异性权重网格（`6x4`/`4x6`/`8x4`/`4x8`）、HDR CEM 11 高精度差值模式、量化后理想端点二次重拟合、High 档 2-Partition 搜索、零 LOH `AsyncGPUReadback` 同步回读与 `PreloadGpu` / `ReleaseGpuCache`。
-  - **CPU 后端**：对 `RGBA8` / `RGBA16F` / `RGBA32F` 四通道格式走**零拷贝直传**（`NativeSlice` 指针直接传递），异步模式下**主线程仅做紧凑 `MemCpy` 快照、后台线程逐级展开 Mipmap**（峰值内存最高降低 8×），支持可选 **Unity Job System（`IJobParallelFor`）** 调度（`UseUnityJobSystem`），其余格式采用直接 `unsafe` 指针零堆分配展开，支持多核并行与 `CancellationToken` 取消。
+  - **GPU 后端**：独立轻量化 `ASTC_FAST_ONLY` Kernel、**按块尺寸自适应的 `ASTC_MAX_GRID` VGPR 寄存器瘦身**（`4x4`→16 / `5x5`→25 / `>=6x6`→36）、**行级 Early-Exit 候选误差剪枝**、**`<= 6x6` LDR 块片上 RGBA8 像素缓存**、**零 `pow()` 的 `sqrt` 快速 sRGB 近似**（8-bit 往返 0/256 误差）、**`>= 8x8` 大块 `[numthreads(8, 4, 1)]` Occupancy 调优**、**单 `CommandBuffer` 零回读 GPU Mipmap 生成 + ASTC 编码**（`AstcGpuMipGenerator.compute` 支持奇数 NPOT 边缘覆盖与法线重归一化）、纯整数 ALU BISE 编码、Void-Extent 纯色块零损快速路径、Normal 专用 `CEM 4` + 切线空间角度误差 Dual-Plane、同时支持 RGB（ORM/MRAO）与 RGBA 的动态 CCS Dual-Plane、各向异性权重网格（`6x4`/`4x6`/`8x4`/`4x8`）、HDR CEM 11 高精度差值模式、量化后理想端点二次重拟合、High 档 2-Partition 搜索、零 LOH `AsyncGPUReadback` 同步回读与 `PreloadGpu`（同步预热编码器与 Mipmap Kernel）/ `ReleaseGpuCache`。
+  - **CPU 后端**：**Windows x64 运行时 AVX2 自动分派**（自动回退 SSE4.1）、对 `RGBA8` / `RGBA16F` / `RGBA32F` 四通道格式走**零拷贝直传**（`NativeSlice` 指针直接传递）、**零分配 `CompressRawPixelsInto`**、异步模式下**主线程仅做紧凑 `MemCpy` 快照、后台线程逐级展开 Mipmap**（峰值内存最高降低 8×）、支持可选 **Unity Job System（`IJobParallelFor`）** 调度（`UseUnityJobSystem`）、其余格式采用直接 `unsafe` 指针零堆分配展开，支持多核并行与 `CancellationToken` 取消。
 - **丰富的输入格式、完整 Mipmap 与测试保障**：
   - 支持 24 种未压缩 `GraphicsFormat`（GPU 后端亦支持 `B10G11R11_UFloatPack32` 等 2D `RenderTexture`），涵盖 **LDR（8-bit UNorm / sRGB、16-bit UNorm）** 与 **HDR（16-bit / 32-bit Float）**。
   - 支持完整 Mipmap 链逐级压缩（兼容非正方形与非 2 的幂次纹理），内置 EditMode 交叉解码黄金单元测试（`Aperture.Astcenc.Tests`）与 CI Shader / `.meta` GUID 校验工作流。
@@ -37,19 +37,21 @@
 
 ## 支持平台与原生库
 
-预编译的 `astc-encoder v5.7.1` 原生库位于 `Assets/ASTC Encoder/Plugins/` 目录（由 Git LFS 管理）：
+预编译的 `astc-encoder v5.7.1` 原生库位于 `Assets/ASTC Encoder/Plugins/` 目录（由 Git LFS 管理；Windows AVX2、Linux x64 与 iOS `astcenc.xcframework` 等扩展产物亦由 GitHub Actions 自动构建）：
 
 | 平台 | 架构 / 环境 | 原生库文件 | P/Invoke `LibraryName` | 编译特性 |
 | :--- | :--- | :--- | :--- | :--- |
-| **iOS** | ARM64（静态库，iOS 12.0+） | `Plugins/iOS/libastcenc-neon-static.a` | `__Internal` | ARM NEON |
+| **iOS** | ARM64（iOS 12.0+）+ XCFramework（CI） | `Plugins/iOS/libastcenc-neon-static.a` | `__Internal` | ARM NEON（CI 同步产出真机+模拟器 `astcenc.xcframework`） |
 | **Android** | `arm64-v8a`（API 21+） | `Plugins/Android/arm64-v8a/libastcenc-neon-shared.so` | `libastcenc-neon-shared` | ARM NEON / `c++_static` / 16KB 页对齐 |
 | **Android** | `armeabi-v7a`（API 21+） | `Plugins/Android/armeabi-v7a/libastcenc-none-shared.so` | `libastcenc-none-shared` | NONE SIMD / `c++_static` / 16KB 页对齐 |
 | **macOS** | Editor & Standalone Universal（11.0+） | `Plugins/Mac/libastcenc-shared.dylib` | `libastcenc-shared` | Universal（`x86_64` SSE4.1 + `x86_64h` AVX2 + `arm64` NEON） |
-| **Windows** | Editor & Standalone x64 | `Plugins/x64/astcenc-sse4.1-shared.dll` | `astcenc-sse4.1-shared.dll` | SSE4.1 / 静态 MSVC 运行时（`/MT`） |
+| **Windows** | Editor & Standalone x64 | `Plugins/x64/astcenc-sse4.1-shared.dll`（+ 可选 `astcenc-avx2-shared.dll`） | 运行时 AVX2 → SSE4.1 自动分派 | 静态 MSVC 运行时（`/MT`） |
+| **Linux** | Editor & Standalone x64（CI） | `Plugins/Linux/x86_64/libastcenc-sse4.1-shared.so` | `libastcenc-sse4.1-shared` | SSE4.1（由 GitHub Actions 自动构建） |
 
 > **说明**：
 > - Android 运行时会根据 `IntPtr.Size == 8` 自动在 `arm64-v8a`（NEON）与 `armeabi-v7a`（NONE）库之间分派。
-> - 未提供原生 CPU 库的平台（如 Linux / WebGL）可正常通过编译；CPU 后端会准确上报不支持并安全返回错误，若设备支持 Compute Shader 仍可使用 GPU 后端。
+> - Windows x64 运行时会先通过 `IsProcessorFeaturePresent(40)` 探测 CPU AVX2 支持，若已部署 `astcenc-avx2-shared.dll` 则自动走 AVX2 加速，否则平滑回退到 `astcenc-sse4.1-shared.dll`。
+> - 未提供原生 CPU 库的平台（如 WebGL）可正常通过编译；`Encoder.IsCpuSupported` 会准确返回 `false`，若设备支持 Compute Shader 仍可使用 GPU 后端。
 
 ---
 
