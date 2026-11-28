@@ -365,10 +365,25 @@ void AstcWriteBits128(inout uint4 blk, uint bitPos, uint numBits, uint val)
     blk.w |= ((wordIdx == 3u) ? lo : 0u) | ((wordIdx == 2u) ? hi : 0u);
 }
 
+// Pure-integer SWAR 32-bit bit-reversal (avoids Unity 2021.3 HLSLcc Metal transpiler bug
+// where vectorized reversebits(uint4) emits bitReverse(int4) assigned to float4).
+uint AstcReverseBits32(uint x)
+{
+    x = ((x & 0x55555555u) << 1u) | ((x >> 1u) & 0x55555555u);
+    x = ((x & 0x33333333u) << 2u) | ((x >> 2u) & 0x33333333u);
+    x = ((x & 0x0F0F0F0Fu) << 4u) | ((x >> 4u) & 0x0F0F0F0Fu);
+    x = ((x & 0x00FF00FFu) << 8u) | ((x >> 8u) & 0x00FF00FFu);
+    return (x << 16u) | (x >> 16u);
+}
+
 // Reverses all 128 bits of a uint4 (places BISE weight stream at MSB descending).
 uint4 AstcReverse128(uint4 v)
 {
-    return uint4(reversebits(v.w), reversebits(v.z), reversebits(v.y), reversebits(v.x));
+    return uint4(
+        AstcReverseBits32(v.w),
+        AstcReverseBits32(v.z),
+        AstcReverseBits32(v.y),
+        AstcReverseBits32(v.x));
 }
 
 // Shared per-thread BISE symbol scratch buffer (eliminates array-by-value copies in FXC/HLSLcc/DXC).

@@ -1,0 +1,286 @@
+name: Performance Benchmarks & README Sync
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_results:
+        description: "Commit updated README.md, README_CN.md, docs/Benchmarks.md, and docs/benchmarks/baseline.json"
+        required: false
+        default: false
+        type: boolean
+      unity_version:
+        description: "Unity Editor version on GameCI"
+        required: false
+        default: "2021.3.6f1"
+        type: string
+      iterations:
+        description: "Measured iterations per benchmark case"
+        required: false
+        default: "5"
+        type: string
+  schedule:
+    # Weekly regression check every Sunday at 03:00 UTC
+    - cron: "0 3 * * 0"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UNITY_VERSION: ${{ inputs.unity_version || '2021.3.6f1' }}
+  BENCH_ITERS: ${{ inputs.iterations || '5' }}
+
+jobs:
+  check-unity-license:
+    name: Check Unity License
+    runs-on: ubuntu-latest
+    outputs:
+      has_license: ${{ steps.check.outputs.has_license }}
+    steps:
+      - id: check
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+        run: |
+          if [[ -n "${UNITY_LICENSE}" || -n "${UNITY_SERIAL}" ]]; then
+            echo "has_license=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_license=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::UNITY_LICENSE not configured. Running cross-platform Native CPU benchmarks only."
+          fi
+
+  native-cpu-bench:
+    name: Native CPU Bench (${{ matrix.label }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Windows-x64
+            os: windows-latest
+            artifact: native-bench-windows
+            out: bench_native_windows.json
+          - label: macOS-ARM64
+            os: macos-latest
+            artifact: native-bench-macos
+            out: bench_native_macos.json
+          - label: Linux-x64
+            os: ubuntu-latest
+            artifact: native-bench-linux
+            out: bench_native_linux.json
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout repository (with Git LFS & submodules)
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+          submodules: ${{ matrix.os == 'ubuntu-latest' }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run Windows AVX2 vs SSE4.1 benchmark
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          python scripts/bench-native-cpu.py `
+            --lib "AVX2=Assets/ASTC Encoder/Plugins/x64/astcenc-avx2-shared.dll" `
+            --lib "SSE4.1=Assets/ASTC Encoder/Plugins/x64/astcenc-sse4.1-shared.dll" `
+            --size 512 --warmup 1 --iterations "${{ env.BENCH_ITERS }}" `
+            --out "${{ matrix.out }}"
+
+      - name: Run macOS Apple Silicon NEON benchmark
+        if: matrix.os == 'macos-latest'
+        run: |
+          python3 scripts/bench-native-cpu.py \
+            --lib "ARM64_NEON=Assets/ASTC Encoder/Plugins/Mac/libastcenc-shared.dylib" \
+            --size 512 --warmup 1 --iterations "${{ env.BENCH_ITERS }}" \
+            --out "${{ matrix.out }}"
+
+      - name: Build and run Linux x64 SSE4.1 benchmark
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          chmod +x scripts/build-linux-astcenc.sh
+          ./scripts/build-linux-astcenc.sh
+          python3 scripts/bench-native-cpu.py \
+            --lib "SSE4.1=Assets/ASTC Encoder/Plugins/Linux/x86_64/libastcenc-sse4.1-shared.so" \
+            --size 512 --warmup 1 --iterations "${{ env.BENCH_ITERS }}" \
+            --out "${{ matrix.out }}"
+
+      - name: Upload native benchmark JSON
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.out }}
+          retention-days: 7
+
+  build-macos-bench-player:
+    name: Build StandaloneOSX Benchmark Player
+    needs: [check-unity-license]
+    if: needs.check-unity-license.outputs.has_license == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository (with Git LFS)
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Cache Unity Library
+        uses: actions/cache@v4
+        with:
+          path: Library
+          key: Library-StandaloneOSX-${{ env.UNITY_VERSION }}-${{ hashFiles('Assets/**', 'Packages/**', 'ProjectSettings/**') }}
+          restore-keys: |
+            Library-StandaloneOSX-${{ env.UNITY_VERSION }}-
+            Library-StandaloneOSX-
+
+      - name: Build macOS Universal Player
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+          UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+        with:
+          unityVersion: ${{ env.UNITY_VERSION }}
+          targetPlatform: StandaloneOSX
+          buildName: ASTCEncoder
+          versioning: None
+          allowDirtyBuild: true
+          buildMethod: Aperture.Astcenc.Editor.CIBuildScript.Build
+          customParameters: "-scriptingBackend Mono"
+
+      - name: Upload macOS Player artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-player-macos
+          path: build/StandaloneOSX
+          retention-days: 1
+
+  unity-metal-gpu-bench:
+    name: Unity Real Metal GPU + CPU Bench (macOS Apple Silicon)
+    needs: [build-macos-bench-player]
+    runs-on: macos-latest
+    steps:
+      - name: Download macOS Player
+        uses: actions/download-artifact@v4
+        with:
+          name: bench-player-macos
+          path: build/StandaloneOSX
+
+      - name: Run Standalone Player Benchmarks on Apple Silicon Metal GPU
+        run: |
+          APP="$(find build/StandaloneOSX -maxdepth 2 -type d -name '*.app' | head -n 1)"
+          if [[ -z "${APP}" ]]; then
+            echo "ERROR: macOS .app bundle not found." >&2
+            exit 1
+          fi
+          BIN="$(find "${APP}/Contents/MacOS" -maxdepth 1 -type f | head -n 1)"
+          chmod +x "${BIN}"
+          xattr -dr com.apple.quarantine "${APP}" || true
+
+          LOG_FILE="${PWD}/bench-macos-metal.log"
+          OUT_JSON="${PWD}/bench_unity_macos_metal.json"
+
+          # Intentionally omit -nographics so the player executes on real Apple Silicon Metal GPU
+          # with hardware ASTC sampling and zero-readback CommandBuffer.CopyTexture.
+          set +e
+          "${BIN}" -batchmode -logfile "${LOG_FILE}" \
+            -astc-benchmark \
+            -astc-bench-out "${OUT_JSON}" \
+            -astc-bench-warmup 2 \
+            -astc-bench-iters "${BENCH_ITERS}" \
+            -astc-bench-commit "${GITHUB_SHA}"
+          STATUS=$?
+          set -e
+
+          cat "${LOG_FILE}"
+          if grep -q "ASTC_BENCH_FAILED" "${LOG_FILE}"; then
+            echo "ERROR: ASTC_BENCH_FAILED detected." >&2
+            exit 1
+          fi
+          grep -q "ASTC_BENCH_PASSED" "${LOG_FILE}"
+          if [[ "${STATUS}" -ne 0 || ! -f "${OUT_JSON}" ]]; then
+            echo "ERROR: Benchmark exited with status ${STATUS} or JSON missing." >&2
+            exit 1
+          fi
+
+      - name: Upload Unity Metal GPU benchmark JSON
+        uses: actions/upload-artifact@v4
+        with:
+          name: unity-bench-macos-metal
+          path: |
+            bench_unity_macos_metal.json
+            bench-macos-metal.log
+          retention-days: 14
+
+  publish-benchmark-report:
+    name: Aggregate Benchmarks, Regression Diff & Sync Docs
+    needs: [native-cpu-bench, unity-metal-gpu-bench]
+    if: always() && (needs.native-cpu-bench.result == 'success' || needs.unity-metal-gpu-bench.result == 'success')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all benchmark JSON artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: bench-artifacts
+
+      - name: Generate docs/Benchmarks.md, Regression Diff & Update READMEs
+        run: |
+          ARGS=()
+          UNITY_JSON="$(find bench-artifacts -name 'bench_unity_macos_metal.json' | head -n 1 || true)"
+          if [[ -n "${UNITY_JSON}" ]]; then
+            ARGS+=(--unity-report "${UNITY_JSON}")
+          fi
+          for f in \
+            "$(find bench-artifacts -name 'bench_native_windows.json' | head -n 1 || true)" \
+            "$(find bench-artifacts -name 'bench_native_macos.json' | head -n 1 || true)" \
+            "$(find bench-artifacts -name 'bench_native_linux.json' | head -n 1 || true)"; do
+            if [[ -n "${f}" && -f "${f}" ]]; then
+              ARGS+=(--native-report "${f}")
+            fi
+          done
+
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          python3 scripts/update-benchmark-docs.py \
+            "${ARGS[@]}" \
+            --baseline docs/benchmarks/baseline.json \
+            --write-baseline docs/benchmarks/baseline.json \
+            --docs-out docs/Benchmarks.md \
+            --readme-en README.md \
+            --readme-cn README_CN.md \
+            --step-summary "${GITHUB_STEP_SUMMARY}" \
+            --commit "${GITHUB_SHA}" \
+            --run-url "${RUN_URL}"
+
+      - name: Upload aggregated benchmark report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: astc-benchmark-report
+          path: |
+            docs/Benchmarks.md
+            docs/benchmarks/baseline.json
+            bench-artifacts
+          retention-days: 30
+
+      - name: Commit updated READMEs and baseline (when commit_results == true)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.commit_results == true }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md README_CN.md docs/Benchmarks.md docs/benchmarks/baseline.json
+          if git diff --cached --quiet; then
+            echo "No benchmark doc changes to commit."
+            exit 0
+          fi
+          git commit -m "Update performance benchmarks and regression baseline [skip ci]"
+          git push

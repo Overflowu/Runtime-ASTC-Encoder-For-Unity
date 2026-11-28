@@ -142,6 +142,53 @@ public void UpdateAtlasTile(CommandBuffer cmd, Texture tileSrc, Texture2D astcAt
 
 ---
 
+## 性能基准测试
+
+<!-- BENCHMARK_START -->
+以下数据由 GitHub Actions 在 **`Apple Paravirtual device`（Metal）+ `Apple M1 (Virtual)`（3 核） / Unity `2021.3.6f1`** 上自动实测生成（无 Editor 开销的 Standalone Player，预热 + 多次采样中位数）：
+
+#### GPU Compute vs. CPU 编码对比（`1024×1024` RGBA8）
+
+| 块尺寸 | 质量 | GPU 耗时 (ms) | CPU 耗时 (ms) | GPU 加速比 | GPU / CPU PSNR | 显存节省 |
+| :--- | :--- | ---: | ---: | ---: | ---: | ---: |
+| **ASTC 4x4** | `Fast` | 7.66 | 253.41 | **33.1×** | 48.9 / 49.0 dB | -75.0% |
+| **ASTC 4x4** | `Medium` | 41.00 | 519.59 | **12.7×** | 46.4 / 50.2 dB | -75.0% |
+| **ASTC 6x6** | `Fast` | 20.34 | 371.75 | **18.3×** | 29.3 / 41.7 dB | -88.8% |
+| **ASTC 6x6** | `Medium` | 57.49 | 876.38 | **15.2×** | 32.6 / 43.2 dB | -88.8% |
+| **ASTC 8x8** | `Fast` | 8.51 | 836.19 | **98.2×** | 43.4 / 46.0 dB | -93.8% |
+| **ASTC 8x8** | `Medium` | 37.02 | 1848.60 | **49.9×** | 44.1 / 47.9 dB | -93.8% |
+| **ASTC 12x12** | `Fast` | 10.85 | 710.89 | **65.5×** | 24.7 / 27.8 dB | -97.2% |
+| **ASTC 12x12** | `Medium` | 30.73 | 1254.79 | **40.8×** | 25.3 / 30.1 dB | -97.2% |
+
+#### 关键运行时特性实测
+
+| 场景 | 中位数耗时 / 吞吐 | GC 分配 | 说明 |
+| :--- | :--- | ---: | :--- |
+| GPU 零回读 `CompressToTexture` (`1024×1024 6x6 Fast`) | **2.70 ms** (388.7 MP/s) | 0.0 KB | 直拷硬件 ASTC 纹理，无 CPU 回读 |
+| GPU 单 CommandBuffer MipGen + 编码 (`1024×1024+Mips`) | **0.75 ms** (1861.7 MP/s) | 0.0 KB | 11 级 Mip 生成与编码一体化完成 |
+| 法线贴图 GGGR 编码 (`512×512 6x6 Medium`) | GPU **19.26 ms** vs CPU 319.21 ms | 0.0 KB | 平均角度误差：GPU 0.27° vs CPU 0.15° |
+| 原始像素直压 `CompressRawPixelsInto` (`512×512 6x6 Fast`) | **196.09 ms** (1.3 MP/s) | **4096 B** | 复⽤ NativeArray + `AstcContextPool` |
+| KTX 磁盘缓存秒开 `AstcDiskCache.TryLoad` (`512×512+Mips`) | **0.66 ms** | 124.8 KB | 一次压缩，后续启动直传 GPU |
+
+#### 跨平台原生 CPU 指令集实测（`astc-encoder v5.7.1`，`512×512` RGBA8 `ASTC_6x6`）
+
+| 平台 / CPU | 指令集（ISA） | 线程 | `Fast` (ms) | `Medium` (ms) | `Fast` 吞吐 | CPU 软解 (ms) |
+| :--- | :--- | ---: | ---: | ---: | ---: | ---: |
+| Windows AMD64 (`AMD EPYC 9V74 80-Core Processor`) | `AVX2` | 4 | 40.04 | 173.18 | 6.55 | 1.28 |
+| Windows AMD64 (`AMD EPYC 9V74 80-Core Processor`) | `SSE4.1` | 4 | 43.90 | 180.55 | 5.97 | 1.87 |
+| Darwin arm64 (`Apple M1 (Virtual)`) | `ARM64_NEON` | 3 | 34.68 | 154.93 | 7.56 | 1.51 |
+| Linux x86_64 (`AMD EPYC 7763 64-Core Processor`) | `SSE4.1` | 4 | 50.48 | 197.06 | 5.19 | 2.18 |
+
+> 基准溯源：Commit `d3223a5` · 2026-11-28 · [查看完整全矩阵与基线对比（docs/Benchmarks.md）](docs/Benchmarks.md) · [Actions Run](https://github.com/Overflowu/Runtime-ASTC-Encoder-For-Unity/actions/runs/46153027417)
+<!-- BENCHMARK_END -->
+
+**本地在 Unity 中运行完整基准套件**（自动导出 JSON / CSV / Markdown 至 `Logs/AstcBenchmarks/`）：
+- **Editor 菜单**：**Window → ASTC Encoder → Run Performance Benchmark Suite**（或在 Benchmark & Inspector 窗口点击 **Run Full Suite**）
+- **Test Runner**：运行 EditMode `Performance` 分类（`AstcPerformanceBenchmarks`）
+- **CLI / Player**：`Unity -batchmode -projectPath . -executeMethod Aperture.Astcenc.Editor.AstcPerformanceBenchmarkRunner.RunAllFromCli -quit`，或对编译出的 Player 传入 `-astc-benchmark -astc-bench-out report.json`
+
+---
+
 ## Editor 工具与示例
 
 - **可视化对比与质检窗口**：打开 **Window → ASTC Encoder → Benchmark & Inspector**，同屏对比 CPU 与 GPU 解码结果、放大误差热力图、PSNR / RMSE / 法线角度误差与显存节省率，并支持导出 `.ktx` / `.astc`。
