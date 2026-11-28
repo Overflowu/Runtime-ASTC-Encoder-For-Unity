@@ -320,7 +320,7 @@ namespace Aperture.Astcenc.Runtime
                 return null;
 
             bool srgb = GraphicsFormatUtility.IsSRGBFormat(data.GraphicsFormat);
-            bool isHdr = GraphicsFormatUtility.IsFloatFormat(data.GraphicsFormat);
+            bool isHdr = AstcGpuBackend.IsFloatingPointFormat(data.GraphicsFormat);
             byte[] rgba = AstcCpuBackend.DecompressToBytes(data.RawAstcPayload, 0, mip0Bytes, data.Width, data.Height, data.BlockSize, srgb, isHdr, isHdr ? 16 : 8);
             if (rgba == null)
                 return null;

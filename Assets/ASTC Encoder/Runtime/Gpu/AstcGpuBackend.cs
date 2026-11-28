@@ -106,6 +106,35 @@ namespace Aperture.Astcenc.Runtime
             return IsInputSupportedCore(texture, allowSliced: true);
         }
 
+        /// <summary>
+        /// Returns true for any floating-point / HDR <see cref="GraphicsFormat"/> (32-bit float, 16-bit half float,
+        /// packed unsigned float, or compressed HDR formats such as ASTC UFloat / BC6H).
+        /// Unity's <see cref="GraphicsFormatUtility.IsFloatFormat"/> only matches 32-bit float formats and returns
+        /// false for 16-bit half-float (<c>R16*_SFloat</c>) and packed/compressed UFloat formats.
+        /// </summary>
+        internal static bool IsFloatingPointFormat(GraphicsFormat format)
+        {
+            if (GraphicsFormatUtility.IsFloatFormat(format) || GraphicsFormatUtility.IsHalfFormat(format))
+                return true;
+
+            switch (format)
+            {
+                case GraphicsFormat.B10G11R11_UFloatPack32:
+                case GraphicsFormat.E5B9G9R9_UFloatPack32:
+                case GraphicsFormat.RGB_BC6H_UFloat:
+                case GraphicsFormat.RGB_BC6H_SFloat:
+                case GraphicsFormat.RGBA_ASTC4X4_UFloat:
+                case GraphicsFormat.RGBA_ASTC5X5_UFloat:
+                case GraphicsFormat.RGBA_ASTC6X6_UFloat:
+                case GraphicsFormat.RGBA_ASTC8X8_UFloat:
+                case GraphicsFormat.RGBA_ASTC10X10_UFloat:
+                case GraphicsFormat.RGBA_ASTC12X12_UFloat:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
         private static bool IsInputSupportedCore(Texture texture, bool allowSliced)
         {
             if (texture == null || texture.width <= 0 || texture.height <= 0)
@@ -129,7 +158,7 @@ namespace Aperture.Astcenc.Runtime
             if (GraphicsFormatUtility.IsDepthFormat(format)
                 || GraphicsFormatUtility.IsStencilFormat(format)
                 || GraphicsFormatUtility.IsIntegerFormat(format)
-                || (!GraphicsFormatUtility.IsFloatFormat(format) && GraphicsFormatUtility.IsSignedFormat(format)))
+                || (!IsFloatingPointFormat(format) && GraphicsFormatUtility.IsSignedFormat(format)))
             {
                 return false;
             }
@@ -180,7 +209,7 @@ namespace Aperture.Astcenc.Runtime
             }
 
             bool sourceIsSRGB = GraphicsFormatUtility.IsSRGBFormat(sourceFormat);
-            isHdr = !sourceIsSRGB && GraphicsFormatUtility.IsFloatFormat(sourceFormat);
+            isHdr = !sourceIsSRGB && IsFloatingPointFormat(sourceFormat);
             isSRGB = sourceIsSRGB;
             return GetAstcGraphicsFormat(blockSize, isSRGB, isHdr);
         }
@@ -282,7 +311,7 @@ namespace Aperture.Astcenc.Runtime
                 return k_ModeLdrNormal;
             }
 
-            isHdr = !isSRGB && GraphicsFormatUtility.IsFloatFormat(sourceFormat);
+            isHdr = !isSRGB && IsFloatingPointFormat(sourceFormat);
             bool hasAlpha = GraphicsFormatUtility.HasAlphaChannel(sourceFormat);
             if (isHdr)
             {
@@ -496,7 +525,7 @@ namespace Aperture.Astcenc.Runtime
             int srcMips = Math.Max(1, source.mipmapCount);
             if (generateMipmaps && srcMips <= 1 && (source.width > 1 || source.height > 1) && EnsureMipShaderLoaded())
             {
-                bool isHdrSrc = GraphicsFormatUtility.IsFloatFormat(source.graphicsFormat);
+                bool isHdrSrc = IsFloatingPointFormat(source.graphicsFormat);
                 if (!isHdrSrc || IsLoadStoreSupported(GraphicsFormat.R16G16B16A16_SFloat))
                 {
                     willGenerateMips = true;

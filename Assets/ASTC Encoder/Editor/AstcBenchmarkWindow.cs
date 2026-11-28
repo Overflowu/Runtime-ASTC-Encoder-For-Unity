@@ -179,7 +179,7 @@ namespace Aperture.Astcenc.Editor
 
             int width = m_SourceTexture.width;
             int height = m_SourceTexture.height;
-            bool isHdr = GraphicsFormatUtility.IsFloatFormat(m_SourceTexture.graphicsFormat);
+            bool isHdr = IsHdrFormat(m_SourceTexture.graphicsFormat);
             bool isSrgb = m_TextureType == TextureType.Default && GraphicsFormatUtility.IsSRGBFormat(m_SourceTexture.graphicsFormat);
 
             Texture2D readableSource = CreateReadableCopy(m_SourceTexture, isSrgb, isHdr);
@@ -335,6 +335,16 @@ namespace Aperture.Astcenc.Editor
             }
         }
 
+        private static bool IsHdrFormat(GraphicsFormat format)
+        {
+            return GraphicsFormatUtility.IsFloatFormat(format)
+                || GraphicsFormatUtility.IsHalfFormat(format)
+                || format == GraphicsFormat.B10G11R11_UFloatPack32
+                || format == GraphicsFormat.E5B9G9R9_UFloatPack32
+                || format == GraphicsFormat.RGB_BC6H_UFloat
+                || format == GraphicsFormat.RGB_BC6H_SFloat;
+        }
+
         private void ExportFile(string extension)
         {
             if (m_SourceTexture == null)
@@ -345,7 +355,7 @@ namespace Aperture.Astcenc.Editor
             if (string.IsNullOrEmpty(path))
                 return;
 
-            bool isHdr = GraphicsFormatUtility.IsFloatFormat(m_SourceTexture.graphicsFormat);
+            bool isHdr = IsHdrFormat(m_SourceTexture.graphicsFormat);
             bool isSrgb = m_TextureType == TextureType.Default && GraphicsFormatUtility.IsSRGBFormat(m_SourceTexture.graphicsFormat);
             Texture2D readableSource = CreateReadableCopy(m_SourceTexture, isSrgb, isHdr);
             try
