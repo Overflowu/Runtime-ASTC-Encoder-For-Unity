@@ -60,10 +60,9 @@ static uint  g_AstcEpVals[8];
 static uint  g_AstcEpCArr[8];
 static uint  g_AstcEpUqArr[8];
 
-// On-chip per-thread packed 4x16-bit working-pixel cache for small blocks (4x4, 5x5, 6x6 => 16..36 uint2s).
-// Eliminates redundant texture loads, sRGB, and HDR LNS conversions across all 29 fetch call sites
-// while keeping VGPR usage bounded for larger 8x8..12x12 blocks.
-#if (BLOCK_X * BLOCK_Y) <= 36
+// On-chip per-thread packed 4x16-bit working-pixel cache (16..144 uint2s = 128..1152 bytes per thread).
+// Eliminates redundant texture loads, sRGB, and HDR LNS conversions across all 18+ fetch call sites
+// and keeps FXC/HLSLcc/Metal shader compilation fast for >=8x8 kernels.
 #define ASTC_ENABLE_PIXEL_CACHE 1
 static uint2 g_AstcPackedBlock[BLOCK_X * BLOCK_Y];
 
@@ -72,9 +71,6 @@ uint2 AstcPackRgba16(float4 v)
     uint4 u = (uint4)clamp(floor(v + 0.5), 0.0, 65535.0);
     return uint2(u.x | (u.y << 16u), u.z | (u.w << 16u));
 }
-#else
-#define ASTC_ENABLE_PIXEL_CACHE 0
-#endif
 
 // Loads and converts one texel from _AstcSourceTex into working space (single shared sRGB + LNS path).
 float4 AstcLoadWorkingPixel(uint baseX, uint baseY, uint x, uint y, uint effMode, out float impWeight)
