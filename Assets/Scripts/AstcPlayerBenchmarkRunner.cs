@@ -11,6 +11,7 @@ using Unity.Collections;
 using UnityEngine;
 using UnityEngine.Experimental.Rendering;
 using Debug = UnityEngine.Debug;
+using Encoder = Aperture.Astcenc.Runtime.Encoder;
 
 /// <summary>
 /// Standalone Unity Player performance & quality benchmark runner.
@@ -335,51 +336,59 @@ public static class AstcPlayerBenchmarkRunner
                 const int w = 512;
                 const int h = 512;
                 int outCap = ((w + 5) / 6) * ((h + 5) / 6) * 16;
-                using var srcNative = new NativeArray<byte>(w * h * 4, Allocator.Persistent);
-                using var dstNative = new NativeArray<byte>(outCap, Allocator.Persistent);
-                for (int i = 0; i < srcNative.Length; i++)
-                    srcNative[i] = (byte)((i * 37) & 0xFF);
+                var srcNative = new NativeArray<byte>(w * h * 4, Allocator.Persistent);
+                var dstNative = new NativeArray<byte>(outCap, Allocator.Persistent);
+                try
+                {
+                    for (int i = 0; i < srcNative.Length; i++)
+                        srcNative[i] = (byte)((i * 37) & 0xFF);
 
-                var rawOpt = AstcCompressOptions.Default;
-                rawOpt.Backend = EncodeBackend.Cpu;
-                rawOpt.BlockSize = BlockSize.ASTC_6x6;
-                rawOpt.Quality = CompressQuality.Fast;
-                rawOpt.ThreadCount = 0;
+                    var rawOpt = AstcCompressOptions.Default;
+                    rawOpt.Backend = EncodeBackend.Cpu;
+                    rawOpt.BlockSize = BlockSize.ASTC_6x6;
+                    rawOpt.Quality = CompressQuality.Fast;
+                    rawOpt.ThreadCount = 0;
 
-                report.Results.Add(Sample(
-                    name: "CPU_CompressRawPixels_512_6x6_Fast",
-                    category: "CPU_ZeroAlloc",
-                    backend: "CPU",
-                    resolution: "512x512",
-                    blockSize: "ASTC_6x6",
-                    quality: "Fast",
-                    totalPixels: w * (long)h,
-                    uncompressedBytes: w * h * 4,
-                    warmup: 1,
-                    iterations: iterations,
-                    action: () =>
-                    {
-                        using AstcRaw raw = Encoder.CompressRawPixels(srcNative, w, h, GraphicsFormat.R8G8B8A8_UNorm, rawOpt);
-                        return raw != null ? raw.Length : 0;
-                    }));
+                    report.Results.Add(Sample(
+                        name: "CPU_CompressRawPixels_512_6x6_Fast",
+                        category: "CPU_ZeroAlloc",
+                        backend: "CPU",
+                        resolution: "512x512",
+                        blockSize: "ASTC_6x6",
+                        quality: "Fast",
+                        totalPixels: w * (long)h,
+                        uncompressedBytes: w * h * 4,
+                        warmup: 1,
+                        iterations: iterations,
+                        action: () =>
+                        {
+                            using AstcRaw raw = Encoder.CompressRawPixels(srcNative, w, h, GraphicsFormat.R8G8B8A8_UNorm, rawOpt);
+                            return raw != null ? raw.Length : 0;
+                        }));
 
-                report.Results.Add(Sample(
-                    name: "CPU_CompressRawPixelsInto_512_6x6_Fast",
-                    category: "CPU_ZeroAlloc",
-                    backend: "CPU",
-                    resolution: "512x512",
-                    blockSize: "ASTC_6x6",
-                    quality: "Fast",
-                    totalPixels: w * (long)h,
-                    uncompressedBytes: w * h * 4,
-                    warmup: 1,
-                    iterations: iterations,
-                    action: () =>
-                    {
-                        bool ok = Encoder.CompressRawPixelsInto(srcNative, dstNative, w, h, GraphicsFormat.R8G8B8A8_UNorm, rawOpt, out int written);
-                        return ok ? written : 0;
-                    },
-                    notes: "Zero-alloc caller-owned NativeArray + AstcContextPool"));
+                    report.Results.Add(Sample(
+                        name: "CPU_CompressRawPixelsInto_512_6x6_Fast",
+                        category: "CPU_ZeroAlloc",
+                        backend: "CPU",
+                        resolution: "512x512",
+                        blockSize: "ASTC_6x6",
+                        quality: "Fast",
+                        totalPixels: w * (long)h,
+                        uncompressedBytes: w * h * 4,
+                        warmup: 1,
+                        iterations: iterations,
+                        action: () =>
+                        {
+                            bool ok = Encoder.CompressRawPixelsInto(srcNative, dstNative, w, h, GraphicsFormat.R8G8B8A8_UNorm, rawOpt, out int written);
+                            return ok ? written : 0;
+                        },
+                        notes: "Zero-alloc caller-owned NativeArray + AstcContextPool"));
+                }
+                finally
+                {
+                    srcNative.Dispose();
+                    dstNative.Dispose();
+                }
 
                 // CPU Software Decompression (512x512 ASTC_6x6)
                 var encOpt = AstcCompressOptions.Default;
