@@ -1,0 +1,152 @@
+name: Release & Publish UPM Package
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - master
+  workflow_dispatch:
+    inputs:
+      tag_override:
+        description: "Optional tag override (e.g. v2.3.0). Defaults to v<version> from package.json"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  publish-release:
+    name: Tag Release & Publish UPM Package
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.merged == true && github.event.pull_request.head.ref == 'develop')
+    steps:
+      - name: Checkout master (with Git LFS binaries)
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+          lfs: true
+
+      - name: Read package metadata and resolve release tag
+        id: meta
+        run: |
+          PKG_JSON="Assets/ASTC Encoder/package.json"
+          PKG_NAME="$(python3 -c 'import json; print(json.load(open("'"${PKG_JSON}"'", encoding="utf-8"))["name"])')"
+          PKG_VERSION="$(python3 -c 'import json; print(json.load(open("'"${PKG_JSON}"'", encoding="utf-8"))["version"])')"
+          TAG_INPUT="${{ inputs.tag_override }}"
+          TAG="${TAG_INPUT:-v${PKG_VERSION}}"
+
+          echo "pkg_name=${PKG_NAME}" >> "$GITHUB_OUTPUT"
+          echo "pkg_version=${PKG_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Resolved package=${PKG_NAME}, version=${PKG_VERSION}, tag=${TAG}"
+
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "tag_exists=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::Tag ${TAG} already exists on remote. Skipping duplicate release creation."
+          else
+            echo "tag_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify prebuilt native plugins are resolved (not LFS pointers)
+        if: steps.meta.outputs.tag_exists == 'false'
+        run: |
+          chmod +x .github/scripts/verify-native-plugins.sh
+          ./.github/scripts/verify-native-plugins.sh
+
+      - name: Package UPM tarball (.tgz) and Unity Assets archive (.zip)
+        if: steps.meta.outputs.tag_exists == 'false'
+        env:
+          PKG_NAME: ${{ steps.meta.outputs.pkg_name }}
+          PKG_VERSION: ${{ steps.meta.outputs.pkg_version }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          mkdir -p release-dist/staging/package "release-dist/zip-staging/ASTC Encoder"
+
+          # 1. Standard UPM tarball (root folder must be 'package/' for Unity Package Manager)
+          cp -a "Assets/ASTC Encoder/." release-dist/staging/package/
+          TARBALL="${PKG_NAME}-${PKG_VERSION}.tgz"
+          tar -czf "release-dist/${TARBALL}" -C release-dist/staging package
+
+          # 2. Direct Assets zip archive for non-UPM installation
+          cp -a "Assets/ASTC Encoder/." "release-dist/zip-staging/ASTC Encoder/"
+          ZIPFILE="Runtime-ASTC-Encoder-For-Unity-${TAG}.zip"
+          (cd release-dist/zip-staging && zip -qr "../${ZIPFILE}" "ASTC Encoder")
+
+          # 3. SHA-256 checksums
+          (cd release-dist && sha256sum "${TARBALL}" "${ZIPFILE}" > SHA256SUMS.txt)
+
+          echo "tarball=release-dist/${TARBALL}" >> "$GITHUB_OUTPUT"
+          echo "zipfile=release-dist/${ZIPFILE}" >> "$GITHUB_OUTPUT"
+          ls -lh release-dist/
+          cat release-dist/SHA256SUMS.txt
+
+      - name: Extract release notes from CHANGELOG.md
+        if: steps.meta.outputs.tag_exists == 'false'
+        env:
+          PKG_NAME: ${{ steps.meta.outputs.pkg_name }}
+          PKG_VERSION: ${{ steps.meta.outputs.pkg_version }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          python3 - <<'EOF'
+          import os, re
+
+          version = os.environ["PKG_VERSION"]
+          tag = os.environ["TAG"]
+          pkg_name = os.environ["PKG_NAME"]
+          changelog_path = "Assets/ASTC Encoder/CHANGELOG.md"
+
+          section = ""
+          if os.path.exists(changelog_path):
+              txt = open(changelog_path, encoding="utf-8").read()
+              m = re.search(rf"^## \[{re.escape(version)}\][^\n]*\n(.*?)(?=^## \[|\Z)", txt, re.M | re.S)
+              if m:
+                  section = m.group(1).strip()
+
+          notes = []
+          if section:
+              notes.append(section)
+          else:
+              notes.append(f"Release `{tag}` of `{pkg_name}`.")
+
+          notes.append(
+              "\n---\n\n"
+              "### Installation\n\n"
+              "**Unity Package Manager (Git URL):**\n"
+              "```text\n"
+              f"https://github.com/Overflowu/Runtime-ASTC-Encoder-For-Unity.git?path=/Assets/ASTC%20Encoder#{tag}\n"
+              "```\n\n"
+              "**UPM Local Tarball:** Download `"
+              f"{pkg_name}-{version}.tgz` from the assets below and use **Package Manager → `+` → Add package from tarball...**.\n\n"
+              "**Direct Assets Copy:** Download `"
+              f"Runtime-ASTC-Encoder-For-Unity-{tag}.zip` and extract into your project's `Assets/` folder.\n"
+          )
+
+          with open("release-dist/RELEASE_NOTES.md", "w", encoding="utf-8") as f:
+              f.write("\n".join(notes))
+          EOF
+
+      - name: Create Git Tag and publish GitHub Release
+        if: steps.meta.outputs.tag_exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PKG_NAME: ${{ steps.meta.outputs.pkg_name }}
+          PKG_VERSION: ${{ steps.meta.outputs.pkg_version }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git tag -a "${TAG}" -m "Release ${TAG}"
+          git push origin "refs/tags/${TAG}"
+
+          gh release create "${TAG}" \
+            "release-dist/${PKG_NAME}-${PKG_VERSION}.tgz" \
+            "release-dist/Runtime-ASTC-Encoder-For-Unity-${TAG}.zip" \
+            "release-dist/SHA256SUMS.txt" \
+            --title "Runtime ASTC Encoder ${TAG}" \
+            --notes-file "release-dist/RELEASE_NOTES.md"
