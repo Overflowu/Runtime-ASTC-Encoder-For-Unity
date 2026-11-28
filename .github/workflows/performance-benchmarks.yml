@@ -66,7 +66,7 @@ jobs:
             artifact: native-bench-windows
             out: bench_native_windows.json
           - label: macOS-ARM64
-            os: macos-14
+            os: macos-latest
             artifact: native-bench-macos
             out: bench_native_macos.json
           - label: Linux-x64
@@ -97,7 +97,7 @@ jobs:
             --out "${{ matrix.out }}"
 
       - name: Run macOS Apple Silicon NEON benchmark
-        if: matrix.os == 'macos-14'
+        if: matrix.os == 'macos-latest'
         run: |
           python3 scripts/bench-native-cpu.py \
             --lib "ARM64_NEON=Assets/ASTC Encoder/Plugins/Mac/libastcenc-shared.dylib" \
@@ -167,7 +167,7 @@ jobs:
   unity-metal-gpu-bench:
     name: Unity Real Metal GPU + CPU Bench (macOS Apple Silicon)
     needs: [build-macos-bench-player]
-    runs-on: macos-14
+    runs-on: macos-latest
     steps:
       - name: Download macOS Player
         uses: actions/download-artifact@v4
