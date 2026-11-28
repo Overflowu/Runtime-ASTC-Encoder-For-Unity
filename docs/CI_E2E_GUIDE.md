@@ -28,5 +28,4 @@
 
 ## 二、触发方式
 
-- **自动触发**：向 `master` 或 `develop` 分支推送代码，或向这两个分支提交 Pull Request 时自动运行。
-- **手动触发**：在 **Actions → Unity Multi-Platform Build & E2E Tests → Run workflow** 中触发，可自定义 `unity_version`（默认 `2021.3.6f1`）和 `run_android_emulator`。
+- **手动触发（默认）**：为节省 CI 额度，本流水线不再随 `push` / `pull_request` 自动触发。开发完成需要验证时，在 GitHub 仓库 **Actions → Unity Multi-Platform Build & E2E Tests → Run workflow** 中选择目标分支手动触发，可自定义 `unity_version`（默认 `2021.3.6f1`）和 `run_android_emulator`。
