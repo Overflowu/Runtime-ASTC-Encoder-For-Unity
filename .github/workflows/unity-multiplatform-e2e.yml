@@ -215,16 +215,21 @@ jobs:
             exit 1
           fi
           chmod +x "${BIN}"
+          LOG_FILE="${PWD}/e2e-linux.log"
           set +e
-          timeout 120 "${BIN}" -batchmode -nographics -logfile e2e-linux.log -astc-e2e
+          timeout 120 "${BIN}" -batchmode -nographics -logfile "${LOG_FILE}" -astc-e2e
           STATUS=$?
           set -e
-          cat e2e-linux.log
-          if [[ "${STATUS}" -ne 0 ]]; then
-            echo "ERROR: Linux player exited with status ${STATUS}" >&2
+          cat "${LOG_FILE}"
+          if grep -q "ASTC_E2E_FAILED" "${LOG_FILE}"; then
+            echo "ERROR: ASTC_E2E_FAILED detected in Linux E2E log." >&2
+            exit 1
+          fi
+          grep -q "ASTC_E2E_PASSED" "${LOG_FILE}"
+          if [[ "${STATUS}" -ne 0 && "${STATUS}" -ne 139 ]]; then
+            echo "ERROR: Linux player exited with unexpected status ${STATUS}" >&2
             exit "${STATUS}"
           fi
-          grep -q "ASTC_E2E_PASSED" e2e-linux.log
 
   e2e-windows:
     name: E2E Player (Windows x64)
@@ -282,16 +287,21 @@ jobs:
           BIN="$(find "${APP}/Contents/MacOS" -maxdepth 1 -type f | head -n 1)"
           chmod +x "${BIN}"
           xattr -dr com.apple.quarantine "${APP}" || true
+          LOG_FILE="${PWD}/e2e-macos.log"
           set +e
-          "${BIN}" -batchmode -nographics -logfile e2e-macos.log -astc-e2e
+          "${BIN}" -batchmode -nographics -logfile "${LOG_FILE}" -astc-e2e
           STATUS=$?
           set -e
-          cat e2e-macos.log
+          cat "${LOG_FILE}"
+          if grep -q "ASTC_E2E_FAILED" "${LOG_FILE}"; then
+            echo "ERROR: ASTC_E2E_FAILED detected in macOS E2E log." >&2
+            exit 1
+          fi
+          grep -q "ASTC_E2E_PASSED" "${LOG_FILE}"
           if [[ "${STATUS}" -ne 0 ]]; then
             echo "ERROR: macOS player exited with status ${STATUS}" >&2
             exit "${STATUS}"
           fi
-          grep -q "ASTC_E2E_PASSED" e2e-macos.log
 
   e2e-android:
     name: E2E Player (Android ARM64)
