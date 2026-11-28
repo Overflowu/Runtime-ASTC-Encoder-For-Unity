@@ -63,13 +63,13 @@ Located under `Assets/ASTC Encoder/Runtime/Cpu/` and `Runtime/NativeAPI/`:
 
 ---
 
-## Automated Builds, Verification & Benchmarks (GitHub Actions)
+## Automated Builds, Verification & Releases (GitHub Actions)
 
-The repository includes four CI workflows under `.github/workflows/`:
+The repository includes five CI workflows under `.github/workflows/`:
 
-1. **`verify-shaders-and-code.yml`**: Validates HLSL/Compute shader syntax across all block sizes and verifies Unity `.meta` file completeness and GUID uniqueness on every push/PR to `master` and `develop`.
-2. **`build-native-plugins.yml`**: Builds all native `astc-encoder` binaries from `ThirdParty/astc-encoder` (Windows x64 AVX2 + SSE4.1, macOS Universal, iOS ARM64 + `astcenc.xcframework`, Android `arm64-v8a` / `armeabi-v7a` with symbol stripping and 16 KB page alignment, Linux x64 SSE4.1) and verifies exported symbols.
-   - Triggering manually with `commit_binaries` enabled commits updated binaries (including Linux `.meta` files) directly into `Assets/ASTC Encoder/Plugins/` via Git LFS.
+1. **`verify-shaders-and-code.yml`**: Manually dispatched (`workflow_dispatch`) workflow that validates HLSL/Compute shader syntax across all block sizes and verifies Unity `.meta` file completeness and GUID uniqueness.
+2. **`build-native-plugins.yml`**: Builds all native `astc-encoder` binaries from `ThirdParty/astc-encoder` (Windows x64 AVX2 + SSE4.1, macOS Universal, iOS ARM64 + `astcenc.xcframework`, Android `arm64-v8a` / `armeabi-v7a` with symbol stripping and 16 KB page alignment, Linux x64 SSE4.1) and verifies exported symbols. Automatically runs on non-`master` pushes touching the submodule or workflow file, and can be manually dispatched (`commit_binaries: true` commits updated binaries and Linux `.meta` files via Git LFS).
    - When upgrading `ThirdParty/astc-encoder`, verify struct layouts and signatures in `Runtime/NativeAPI/` against `ThirdParty/astc-encoder/Source/astcenc.h`.
-3. **`unity-multiplatform-e2e.yml`**: Manually dispatched workflow (`workflow_dispatch`) that runs Unity EditMode tests (`Aperture.Astcenc.Tests`) and builds/executes end-to-end smoke tests across Linux x64, Windows x64, macOS Universal, Android ARM64 (emulator), and iOS ARM64 (Xcode build & link) on demand.
-4. **`performance-benchmarks.yml`**: Manually dispatched workflow (`workflow_dispatch`) that runs cross-platform native CPU SIMD benchmarks and Unity Standalone Player GPU/CPU benchmarks, optionally syncing results into `README.md`, `README_CN.md`, `docs/Benchmarks.md`, and `docs/benchmarks/baseline.json`.
+3. **`unity-multiplatform-e2e.yml`**: Manually dispatched (`workflow_dispatch`) workflow that runs Unity EditMode tests (`Aperture.Astcenc.Tests`) and builds/executes end-to-end smoke tests across Linux x64, Windows x64, macOS Universal, Android ARM64 (emulator), and iOS ARM64 (Xcode build & link) on demand.
+4. **`performance-benchmarks.yml`**: Manually dispatched (`workflow_dispatch`) workflow that runs cross-platform native CPU SIMD benchmarks and Unity Standalone Player GPU/CPU benchmarks, optionally syncing results into `README.md`, `README_CN.md`, `docs/Benchmarks.md`, and `docs/benchmarks/baseline.json`.
+5. **`release-package.yml`**: Automatically triggered when a `develop` → `master` pull request is merged (also supports manual `workflow_dispatch`). Verifies resolved LFS native plugins, creates the `v<version>` Git tag from `package.json`, packages both a UPM tarball (`com.aperture.astcenc-<version>.tgz`) and a direct Assets `.zip` archive with SHA-256 checksums, extracts notes from `CHANGELOG.md`, and publishes a GitHub Release.

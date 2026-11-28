@@ -9,6 +9,8 @@ on:
         default: false
         type: boolean
   push:
+    branches-ignore:
+      - master
     paths:
       - 'ThirdParty/astc-encoder'
       - '.github/workflows/build-native-plugins.yml'

@@ -1,13 +1,7 @@
 name: Verify Shaders and Unity Metadata
 
 on:
-  pull_request:
-    branches: [ master, develop ]
-  push:
-    branches: [ master, develop ]
-    paths:
-      - 'Assets/ASTC Encoder/**'
-      - '.github/workflows/verify-shaders-and-code.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
