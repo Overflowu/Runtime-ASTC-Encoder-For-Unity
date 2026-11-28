@@ -265,23 +265,22 @@ void AstcQuantizeHdrRgbEndpoints(
     out float3 uq1Lns)
 {
     // Baseline: majcomp == 3 direct mode (always valid)
-    uint r0 = (uint)clamp(floor(e0Lns.r / 256.0 + 0.5), 0.0, 255.0);
-    uint r1 = (uint)clamp(floor(e1Lns.r / 256.0 + 0.5), 0.0, 255.0);
-    uint g0 = (uint)clamp(floor(e0Lns.g / 256.0 + 0.5), 0.0, 255.0);
-    uint g1 = (uint)clamp(floor(e1Lns.g / 256.0 + 0.5), 0.0, 255.0);
-    uint b0 = 128u + (uint)clamp(floor(e0Lns.b / 512.0 + 0.5), 0.0, 127.0);
-    uint b1 = 128u + (uint)clamp(floor(e1Lns.b / 512.0 + 0.5), 0.0, 127.0);
+    uint baseVals[6];
+    baseVals[0] = (uint)clamp(floor(e0Lns.r / 256.0 + 0.5), 0.0, 255.0);
+    baseVals[1] = (uint)clamp(floor(e1Lns.r / 256.0 + 0.5), 0.0, 255.0);
+    baseVals[2] = (uint)clamp(floor(e0Lns.g / 256.0 + 0.5), 0.0, 255.0);
+    baseVals[3] = (uint)clamp(floor(e1Lns.g / 256.0 + 0.5), 0.0, 255.0);
+    baseVals[4] = 128u + (uint)clamp(floor(e0Lns.b / 512.0 + 0.5), 0.0, 127.0);
+    baseVals[5] = 128u + (uint)clamp(floor(e1Lns.b / 512.0 + 0.5), 0.0, 127.0);
 
-    uint uqR0, uqR1, uqG0, uqG1, uqB0, uqB1;
-    codes[0] = AstcQuantizeColor(r0, epQuant, uqR0);
-    codes[1] = AstcQuantizeColor(r1, epQuant, uqR1);
-    codes[2] = AstcQuantizeColor(g0, epQuant, uqG0);
-    codes[3] = AstcQuantizeColor(g1, epQuant, uqG1);
-    codes[4] = AstcQuantizeColorMin128(b0, epQuant, uqB0);
-    codes[5] = AstcQuantizeColorMin128(b1, epQuant, uqB1);
+    uint baseUq[6];
+    [loop] for (uint bi = 0u; bi < 6u; ++bi)
+    {
+        codes[bi] = AstcQuantizeColorRange(baseVals[bi], epQuant, bi >= 4u, baseUq[bi]);
+    }
 
-    uq0Lns = float3((float)(uqR0 << 8u), (float)(uqG0 << 8u), (float)((uqB0 & 0x7Fu) << 9u));
-    uq1Lns = float3((float)(uqR1 << 8u), (float)(uqG1 << 8u), (float)((uqB1 & 0x7Fu) << 9u));
+    uq0Lns = float3((float)(baseUq[0] << 8u), (float)(baseUq[2] << 8u), (float)((baseUq[4] & 0x7Fu) << 9u));
+    uq1Lns = float3((float)(baseUq[1] << 8u), (float)(baseUq[3] << 8u), (float)((baseUq[5] & 0x7Fu) << 9u));
 
     float3 d0 = uq0Lns - e0Lns;
     float3 d1 = uq1Lns - e1Lns;
@@ -328,7 +327,7 @@ void AstcQuantizeHdrRgbEndpoints(
     int D1_12 = (R0 - B0) - B1_12;
 
     // Try finest resolution modes first (modeval 7..0) and pick the first that fits.
-    for (uint mi = 0u; mi < 8u; ++mi)
+    [loop] for (uint mi = 0u; mi < 8u; ++mi)
     {
         uint mv = 7u - mi;
         uint sh = (mv >> 1u) ^ 3u;
@@ -359,7 +358,7 @@ void AstcQuantizeHdrRgbEndpoints(
 
             uint candCodes[6];
             uint uqV[6];
-            for (uint ci = 0u; ci < 6u; ++ci)
+            [loop] for (uint ci = 0u; ci < 6u; ++ci)
             {
                 candCodes[ci] = AstcQuantizeColor(rawV[ci], epQuant, uqV[ci]);
             }
@@ -371,7 +370,7 @@ void AstcQuantizeHdrRgbEndpoints(
             float candErr = dot(cd0, cd0) + dot(cd1, cd1);
             if (candErr < bestErr)
             {
-                for (uint cj = 0u; cj < 6u; ++cj) codes[cj] = candCodes[cj];
+                [loop] for (uint cj = 0u; cj < 6u; ++cj) codes[cj] = candCodes[cj];
                 uq0Lns = cand0;
                 uq1Lns = cand1;
             }

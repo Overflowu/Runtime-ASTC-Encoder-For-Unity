@@ -35,32 +35,40 @@
 #define ASTC_CEM_HDR_RGB_LDR_ALPHA     14u // 8 endpoint values (HDR RGB + LDR A)
 #define ASTC_CEM_HDR_RGBA_DIRECT       15u // 8 endpoint values (HDR RGB + HDR A)
 
+// Compact 21-entry packed LUT: rangeVal (bits 0..8) | bits (9..12) | trits (13) | quints (14)
+static const uint kAstcQuantTable[21] =
+{
+      2u | (1u << 9u),
+      3u | (0u << 9u) | (1u << 13u),
+      4u | (2u << 9u),
+      5u | (0u << 9u) | (1u << 14u),
+      6u | (1u << 9u) | (1u << 13u),
+      8u | (3u << 9u),
+     10u | (1u << 9u) | (1u << 14u),
+     12u | (2u << 9u) | (1u << 13u),
+     16u | (4u << 9u),
+     20u | (2u << 9u) | (1u << 14u),
+     24u | (3u << 9u) | (1u << 13u),
+     32u | (5u << 9u),
+     40u | (3u << 9u) | (1u << 14u),
+     48u | (4u << 9u) | (1u << 13u),
+     64u | (6u << 9u),
+     80u | (4u << 9u) | (1u << 14u),
+     96u | (5u << 9u) | (1u << 13u),
+    128u | (7u << 9u),
+    160u | (5u << 9u) | (1u << 14u),
+    192u | (6u << 9u) | (1u << 13u),
+    256u | (8u << 9u)
+};
+
 // Returns (range, bits, trits, quints) for a quantization mode 0..20.
 void AstcGetQuantParams(uint q, out uint rangeVal, out uint bits, out uint trits, out uint quints)
 {
-    trits = 0u;
-    quints = 0u;
-    if (q == 0u)       { rangeVal = 2u;   bits = 1u; }
-    else if (q == 1u)  { rangeVal = 3u;   bits = 0u; trits = 1u; }
-    else if (q == 2u)  { rangeVal = 4u;   bits = 2u; }
-    else if (q == 3u)  { rangeVal = 5u;   bits = 0u; quints = 1u; }
-    else if (q == 4u)  { rangeVal = 6u;   bits = 1u; trits = 1u; }
-    else if (q == 5u)  { rangeVal = 8u;   bits = 3u; }
-    else if (q == 6u)  { rangeVal = 10u;  bits = 1u; quints = 1u; }
-    else if (q == 7u)  { rangeVal = 12u;  bits = 2u; trits = 1u; }
-    else if (q == 8u)  { rangeVal = 16u;  bits = 4u; }
-    else if (q == 9u)  { rangeVal = 20u;  bits = 2u; quints = 1u; }
-    else if (q == 10u) { rangeVal = 24u;  bits = 3u; trits = 1u; }
-    else if (q == 11u) { rangeVal = 32u;  bits = 5u; }
-    else if (q == 12u) { rangeVal = 40u;  bits = 3u; quints = 1u; }
-    else if (q == 13u) { rangeVal = 48u;  bits = 4u; trits = 1u; }
-    else if (q == 14u) { rangeVal = 64u;  bits = 6u; }
-    else if (q == 15u) { rangeVal = 80u;  bits = 4u; quints = 1u; }
-    else if (q == 16u) { rangeVal = 96u;  bits = 5u; trits = 1u; }
-    else if (q == 17u) { rangeVal = 128u; bits = 7u; }
-    else if (q == 18u) { rangeVal = 160u; bits = 5u; quints = 1u; }
-    else if (q == 19u) { rangeVal = 192u; bits = 6u; trits = 1u; }
-    else               { rangeVal = 256u; bits = 8u; }
+    uint packed = kAstcQuantTable[min(q, 20u)];
+    rangeVal = packed & 0x1FFu;
+    bits     = (packed >> 9u) & 0xFu;
+    trits    = (packed >> 13u) & 1u;
+    quints   = (packed >> 14u) & 1u;
 }
 
 uint AstcGetBiseBitCount(uint count, uint q)
@@ -261,82 +269,49 @@ uint AstcUnquantizeWeight(uint v, uint q)
 }
 
 // Quantizes an 8-bit endpoint value c8 in [0, 255] to the exact nearest BISE code for quant mode q.
-uint AstcQuantizeColor(uint c8, uint q, out uint unquantOut)
+// When min128 is true, constrains the unquantized value to >= 128 (HDR modeval/majcomp == 3 direct endpoints).
+uint AstcQuantizeColorRange(uint c8, uint q, bool min128, out uint unquantOut)
 {
     uint rangeVal, b, t, qu;
     AstcGetQuantParams(q, rangeVal, b, t, qu);
+    if (min128) c8 = max(c8, 128u);
     if (q == ASTC_QUANT_256)
     {
         unquantOut = c8;
         return c8;
     }
 
+    int minK = min128 ? (int)(rangeVal >> 1u) : 0;
     int maxK = (int)rangeVal - 1;
-    int kEst = (int)floor((float)c8 * (float)maxK / 255.0 + 0.5);
-    kEst = clamp(kEst, 0, maxK);
+    int kEst = clamp((int)floor((float)c8 * (float)maxK / 255.0 + 0.5), minK, maxK);
 
-    uint bestCode = AstcLinearToCode((uint)kEst, q);
-    uint bestUq = AstcUnquantizeColor(bestCode, q);
-    int bestErr = abs((int)bestUq - (int)c8);
+    uint bestCode = 0u;
+    uint bestUq = 0u;
+    int bestErr = 10000;
 
-    if (kEst > 0)
+    [loop] for (int step = 0; step < 3; ++step)
     {
-        uint cPrev = AstcLinearToCode((uint)(kEst - 1), q);
-        uint uqPrev = AstcUnquantizeColor(cPrev, q);
-        int ePrev = abs((int)uqPrev - (int)c8);
-        if (ePrev < bestErr) { bestErr = ePrev; bestCode = cPrev; bestUq = uqPrev; }
-    }
-    if (kEst < maxK)
-    {
-        uint cNext = AstcLinearToCode((uint)(kEst + 1), q);
-        uint uqNext = AstcUnquantizeColor(cNext, q);
-        int eNext = abs((int)uqNext - (int)c8);
-        if (eNext < bestErr) { bestCode = cNext; bestUq = uqNext; }
+        int dk = (step == 0) ? 0 : ((step == 1) ? -1 : 1);
+        int k = kEst + dk;
+        if (k < minK || k > maxK) continue;
+        uint code = AstcLinearToCode((uint)k, q);
+        uint uq = AstcUnquantizeColor(code, q);
+        int err = abs((int)uq - (int)c8);
+        if (err < bestErr) { bestErr = err; bestCode = code; bestUq = uq; }
     }
 
     unquantOut = bestUq;
     return bestCode;
 }
 
-// Same as AstcQuantizeColor, but constrains the unquantized value to >= 128
-// (guarantees bit 7 == 1 for HDR modeval/majcomp == 3 direct endpoints).
+uint AstcQuantizeColor(uint c8, uint q, out uint unquantOut)
+{
+    return AstcQuantizeColorRange(c8, q, false, unquantOut);
+}
+
 uint AstcQuantizeColorMin128(uint c8, uint q, out uint unquantOut)
 {
-    uint rangeVal, b, t, qu;
-    AstcGetQuantParams(q, rangeVal, b, t, qu);
-    c8 = max(c8, 128u);
-    if (q == ASTC_QUANT_256)
-    {
-        unquantOut = c8;
-        return c8;
-    }
-
-    int minK = (int)(rangeVal >> 1u);
-    int maxK = (int)rangeVal - 1;
-    int kEst = (int)floor((float)c8 * (float)maxK / 255.0 + 0.5);
-    kEst = clamp(kEst, minK, maxK);
-
-    uint bestCode = AstcLinearToCode((uint)kEst, q);
-    uint bestUq = AstcUnquantizeColor(bestCode, q);
-    int bestErr = abs((int)bestUq - (int)c8);
-
-    if (kEst > minK)
-    {
-        uint cPrev = AstcLinearToCode((uint)(kEst - 1), q);
-        uint uqPrev = AstcUnquantizeColor(cPrev, q);
-        int ePrev = abs((int)uqPrev - (int)c8);
-        if (ePrev < bestErr) { bestErr = ePrev; bestCode = cPrev; bestUq = uqPrev; }
-    }
-    if (kEst < maxK)
-    {
-        uint cNext = AstcLinearToCode((uint)(kEst + 1), q);
-        uint uqNext = AstcUnquantizeColor(cNext, q);
-        int eNext = abs((int)uqNext - (int)c8);
-        if (eNext < bestErr) { bestCode = cNext; bestUq = uqNext; }
-    }
-
-    unquantOut = bestUq;
-    return bestCode;
+    return AstcQuantizeColorRange(c8, q, true, unquantOut);
 }
 
 // Quantizes a normalized weight w01 in [0, 1] to the exact nearest BISE code and returns unquantized [0, 64].
@@ -349,23 +324,19 @@ uint AstcQuantizeWeight(float w01, uint q, out uint unquantOut)
     int maxK = (int)rangeVal - 1;
     int kEst = clamp((int)floor(saturate(w01) * (float)maxK + 0.5), 0, maxK);
 
-    uint bestCode = AstcLinearToCode((uint)kEst, q);
-    uint bestUq = AstcUnquantizeWeight(bestCode, q);
-    float bestErr = abs((float)bestUq - w64);
+    uint bestCode = 0u;
+    uint bestUq = 0u;
+    float bestErr = 1e30;
 
-    if (kEst > 0)
+    [loop] for (int step = 0; step < 3; ++step)
     {
-        uint cPrev = AstcLinearToCode((uint)(kEst - 1), q);
-        uint uqPrev = AstcUnquantizeWeight(cPrev, q);
-        float ePrev = abs((float)uqPrev - w64);
-        if (ePrev < bestErr) { bestErr = ePrev; bestCode = cPrev; bestUq = uqPrev; }
-    }
-    if (kEst < maxK)
-    {
-        uint cNext = AstcLinearToCode((uint)(kEst + 1), q);
-        uint uqNext = AstcUnquantizeWeight(cNext, q);
-        float eNext = abs((float)uqNext - w64);
-        if (eNext < bestErr) { bestCode = cNext; bestUq = uqNext; }
+        int dk = (step == 0) ? 0 : ((step == 1) ? -1 : 1);
+        int k = kEst + dk;
+        if (k < 0 || k > maxK) continue;
+        uint code = AstcLinearToCode((uint)k, q);
+        uint uq = AstcUnquantizeWeight(code, q);
+        float err = abs((float)uq - w64);
+        if (err < bestErr) { bestErr = err; bestCode = code; bestUq = uq; }
     }
 
     unquantOut = bestUq;

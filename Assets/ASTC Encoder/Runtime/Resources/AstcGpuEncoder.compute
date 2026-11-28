@@ -1,5 +1,4 @@
 #pragma editor_sync_compilation
-#pragma use_dxc
 
 #pragma kernel EncodeTex4x4       ASTC_BLOCK_4X4
 #pragma kernel EncodeTex5x5       ASTC_BLOCK_5X5
