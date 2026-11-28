@@ -1,9 +1,6 @@
 name: Performance Benchmarks & README Sync
 
 on:
-  push:
-    branches:
-      - ci/performance-benchmarks
   workflow_dispatch:
     inputs:
       commit_results:
