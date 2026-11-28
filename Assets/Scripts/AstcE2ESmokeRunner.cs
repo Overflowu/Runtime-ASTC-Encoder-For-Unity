@@ -176,7 +176,8 @@ public static class AstcE2ESmokeRunner
             using (AstcRaw raw = tex.CompressTexture(TextureType.Default, BlockSize.ASTC_6x6, CompressQuality.Fastest, backend: EncodeBackend.Cpu))
             {
                 byte[] ktx = AstcKtxContainer.Encode(raw, width, height, 1, GraphicsFormat.RGBA_ASTC6X6_UNorm);
-                AssertTrue(ktx != null && AstcKtxContainer.TryDecode(ktx, out KtxAstcData decoded), "KTX container round-trip failed.");
+                AssertTrue(ktx != null, "KTX container encode returned null.");
+                AssertTrue(AstcKtxContainer.TryDecode(ktx, out KtxAstcData decoded), "KTX container decode failed.");
                 AssertTrue(decoded.Width == width && decoded.Height == height && decoded.MipCount == 1, "KTX decoded metadata mismatch.");
                 AssertTrue(decoded.RawAstcPayload.Length == raw.Length, "KTX decoded payload length mismatch.");
             }
