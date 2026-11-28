@@ -90,7 +90,7 @@ public static class AstcPlayerBenchmarkRunner
             if (!string.IsNullOrEmpty(dir))
                 Directory.CreateDirectory(dir);
 
-            File.WriteAllText(fullOutPath, JsonUtility.ToJson(report, true), Encoding.UTF8);
+            File.WriteAllText(fullOutPath, JsonUtility.ToJson(report, true), new UTF8Encoding(false));
             Debug.Log($"{LogPrefix} ASTC_BENCH_PASSED count={report.Results.Count} output={fullOutPath}");
             Application.Quit(0);
         }
@@ -532,6 +532,10 @@ public static class AstcPlayerBenchmarkRunner
                 if (dec != null)
                 {
                     ComputePsnr(refPixels, dec, out entry.RgbPsnrDb, out entry.RgbaPsnrDb);
+                    if (entry.RgbPsnrDb < 18.0)
+                    {
+                        throw new InvalidOperationException($"Benchmark '{name}' produced invalid quality: RGB PSNR={entry.RgbPsnrDb:F2} dB (< 18 dB). Check GPU shader compilation logs.");
+                    }
                 }
             }
 
@@ -589,6 +593,10 @@ public static class AstcPlayerBenchmarkRunner
                 if (dec != null)
                 {
                     entry.MeanNormalDeg = ComputeMeanNormalAngularErrorDeg(refPixels, dec);
+                    if (entry.MeanNormalDeg > 15.0)
+                    {
+                        throw new InvalidOperationException($"Benchmark '{name}' produced invalid normal error: {entry.MeanNormalDeg:F2} deg (> 15 deg).");
+                    }
                 }
             }
 
