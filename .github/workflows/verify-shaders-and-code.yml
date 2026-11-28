@@ -34,6 +34,7 @@ jobs:
           guids = {}
           missing = []
           for dirpath, dirnames, filenames in os.walk(root):
+              dirnames[:] = [d for d in dirnames if not d.endswith("~") and not d.startswith(".")]
               for d in dirnames:
                   p = os.path.join(dirpath, d)
                   if not os.path.exists(p + ".meta"):

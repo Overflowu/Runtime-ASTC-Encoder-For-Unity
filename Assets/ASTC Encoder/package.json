@@ -13,6 +13,13 @@
     "name": "Overflowu",
     "url": "https://github.com/Overflowu/Runtime-ASTC-Encoder-For-Unity"
   },
+  "samples": [
+    {
+      "displayName": "Basic Usage",
+      "description": "Runtime ASTC compression sample demonstrating Auto/GPU/CPU backends, async encoding, GPU mipmap generation, and persistent KTX v1 disk caching.",
+      "path": "Samples~/BasicUsage"
+    }
+  ],
   "dependencies": {
   }
 }
