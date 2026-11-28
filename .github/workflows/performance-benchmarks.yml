@@ -87,7 +87,7 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          python scripts/bench-native-cpu.py `
+          python .github/scripts/bench-native-cpu.py `
             --lib "AVX2=Assets/ASTC Encoder/Plugins/x64/astcenc-avx2-shared.dll" `
             --lib "SSE4.1=Assets/ASTC Encoder/Plugins/x64/astcenc-sse4.1-shared.dll" `
             --size 512 --warmup 1 --iterations "${{ env.BENCH_ITERS }}" `
@@ -96,7 +96,7 @@ jobs:
       - name: Run macOS Apple Silicon NEON benchmark
         if: matrix.os == 'macos-latest'
         run: |
-          python3 scripts/bench-native-cpu.py \
+          python3 .github/scripts/bench-native-cpu.py \
             --lib "ARM64_NEON=Assets/ASTC Encoder/Plugins/Mac/libastcenc-shared.dylib" \
             --size 512 --warmup 1 --iterations "${{ env.BENCH_ITERS }}" \
             --out "${{ matrix.out }}"
@@ -104,9 +104,9 @@ jobs:
       - name: Build and run Linux x64 SSE4.1 benchmark
         if: matrix.os == 'ubuntu-latest'
         run: |
-          chmod +x scripts/build-linux-astcenc.sh
-          ./scripts/build-linux-astcenc.sh
-          python3 scripts/bench-native-cpu.py \
+          chmod +x .github/scripts/build-linux-astcenc.sh
+          ./.github/scripts/build-linux-astcenc.sh
+          python3 .github/scripts/bench-native-cpu.py \
             --lib "SSE4.1=Assets/ASTC Encoder/Plugins/Linux/x86_64/libastcenc-sse4.1-shared.so" \
             --size 512 --warmup 1 --iterations "${{ env.BENCH_ITERS }}" \
             --out "${{ matrix.out }}"
@@ -251,7 +251,7 @@ jobs:
           done
 
           RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          python3 scripts/update-benchmark-docs.py \
+          python3 .github/scripts/update-benchmark-docs.py \
             "${ARGS[@]}" \
             --baseline docs/benchmarks/baseline.json \
             --write-baseline docs/benchmarks/baseline.json \

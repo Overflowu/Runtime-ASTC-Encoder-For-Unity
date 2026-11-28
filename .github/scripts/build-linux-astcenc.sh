@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 SUBMODULE_DIR="${REPO_ROOT}/ThirdParty/astc-encoder"
 PLUGIN_ROOT="${1:-${REPO_ROOT}/Assets/ASTC Encoder/Plugins/Linux}"
 WORK_DIR="$(mktemp -d)"

@@ -44,11 +44,11 @@ jobs:
 
       - name: Build Linux x86_64 libastcenc-sse4.1-shared.so
         run: |
-          chmod +x scripts/build-linux-astcenc.sh scripts/verify-native-plugins.sh
-          ./scripts/build-linux-astcenc.sh
+          chmod +x .github/scripts/build-linux-astcenc.sh .github/scripts/verify-native-plugins.sh
+          ./.github/scripts/build-linux-astcenc.sh
 
       - name: Verify all platform native plugins and exported symbols
-        run: ./scripts/verify-native-plugins.sh
+        run: ./.github/scripts/verify-native-plugins.sh
 
       - name: Upload Linux native plugin artifact
         uses: actions/upload-artifact@v4
