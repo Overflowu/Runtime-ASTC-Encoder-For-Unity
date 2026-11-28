@@ -7,10 +7,14 @@ public static class astcenc_api
     internal const string LibraryName = "__Internal";
 #elif UNITY_ANDROID && !UNITY_EDITOR
     internal const string LibraryName = "libastcenc-neon-shared";
-#elif UNITY_EDITOR_OSX
+#elif UNITY_EDITOR_OSX || UNITY_STANDALONE_OSX
     internal const string LibraryName = "libastcenc-shared";
-#elif UNITY_EDITOR_WIN
+#elif UNITY_EDITOR_WIN || UNITY_STANDALONE_WIN
     internal const string LibraryName = "astcenc-sse4.1-shared.dll";
+#elif UNITY_EDITOR_LINUX || UNITY_STANDALONE_LINUX
+    internal const string LibraryName = "astcenc-sse4.1-shared";
+#else
+    internal const string LibraryName = "astcenc-shared";
 #endif
 
     /**
@@ -99,8 +103,19 @@ public static class astcenc_api
         ref astcenc_image image,
         ref astcenc_swizzle swizzle,
         IntPtr data_out,
-        [MarshalAs(UnmanagedType.SysInt)] int data_len,
+        UIntPtr data_len,
         uint thread_index);
+
+    public static astcenc_error astcenc_compress_image(
+        IntPtr context,
+        ref astcenc_image image,
+        ref astcenc_swizzle swizzle,
+        IntPtr data_out,
+        int data_len,
+        uint thread_index)
+    {
+        return astcenc_compress_image(context, ref image, ref swizzle, data_out, (UIntPtr)data_len, thread_index);
+    }
     /**
      * @brief Reset the codec state for a new compression.
      *

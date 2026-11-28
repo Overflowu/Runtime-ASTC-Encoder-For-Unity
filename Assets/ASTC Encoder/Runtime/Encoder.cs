@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Runtime.InteropServices;
 using Unity.Collections;
 using UnityEngine;
@@ -326,7 +326,7 @@ namespace Aperture.Astcenc.Runtime
 
         public static bool IsSupport(Texture texture)
         {
-            return texture.isReadable && IsSupportGraphicFormat(texture.graphicsFormat);
+            return texture != null && texture.isReadable && IsSupportGraphicFormat(texture.graphicsFormat);
         }
 
         private static bool CompressRawData<T>(IntPtr context, astcenc_swizzle swizzle, NativeArray<T> raw, int width, int height, int bitness, int mipCount, uint blockX, uint blockY, out IntPtr output, out int size) where T : struct, IRawData
@@ -335,8 +335,8 @@ namespace Aperture.Astcenc.Runtime
             int total = 0;
             for (int i = 0; i < mipCount; i++)
             {
-                int mipmapWidth = width / (1 << i);
-                int mipmapHeight = height / (1 << i);
+                int mipmapWidth = Math.Max(1, width >> i);
+                int mipmapHeight = Math.Max(1, height >> i);
                 int blockCountX = (mipmapWidth + (int)blockX - 1) / (int)blockX;
                 int blockCountY = (mipmapHeight + (int)blockY - 1) / (int)blockY;
                 int length = blockCountX * blockCountY * k_BytePerBlock;
@@ -353,8 +353,8 @@ namespace Aperture.Astcenc.Runtime
             {
                 for (int i = 0; i < mipCount; i++)
                 {
-                    int mipmapWidth = width / (1 << i);
-                    int mipmapHeight = height / (1 << i);
+                    int mipmapWidth = Math.Max(1, width >> i);
+                    int mipmapHeight = Math.Max(1, height >> i);
                     int blockCountX = (mipmapWidth + (int)blockX - 1) / (int)blockX;
                     int blockCountY = (mipmapHeight + (int)blockY - 1) / (int)blockY;
                     int length = blockCountX * blockCountY * k_BytePerBlock;
@@ -543,9 +543,14 @@ namespace Aperture.Astcenc.Runtime
                 return null;
             }
 
-            CompressImage(inputTexture, context, swizzle, blockX, blockY, out IntPtr output, out int size);
+            bool compressed = CompressImage(inputTexture, context, swizzle, blockX, blockY, out IntPtr output, out int size);
 
             astcenc_api.astcenc_context_free(context);
+
+            if (!compressed || output == IntPtr.Zero || size <= 0)
+            {
+                return null;
+            }
 
             return new AstcRaw(output, size);
         }
@@ -584,7 +589,7 @@ namespace Aperture.Astcenc.Runtime
 
                 GraphicsFormat graphicsFormat = FitAstcGraphicsFormat(inputTexture.graphicsFormat, blockSize);
 
-                if(inputTexture.Reinitialize(inputTexture.width, inputTexture.height, graphicsFormat, inputTexture.mipmapCount > 0))
+                if (inputTexture.Reinitialize(inputTexture.width, inputTexture.height, graphicsFormat, inputTexture.mipmapCount > 1))
                 {
                     inputTexture.LoadRawTextureData(raw);
                     inputTexture.Apply(true, makeNoLongerReadable);

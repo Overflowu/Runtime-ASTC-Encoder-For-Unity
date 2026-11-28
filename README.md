@@ -29,12 +29,13 @@
 | **iOS** | ARM64（静态库） | `Plugins/iOS/libastcenc-neon-static.a` | `__Internal` | ARM NEON |
 | **Android** | `arm64-v8a` | `Plugins/Android/arm64-v8a/libastcenc-neon-shared.so` | `libastcenc-neon-shared` | ARM NEON |
 | **Android** | `armeabi-v7a` | `Plugins/Android/armeabi-v7a/libastcenc-none-shared.so` | *(见下方说明)* | None |
-| **macOS Editor** | Editor / OSXUniversal | `Plugins/Mac/libastcenc-shared.dylib` | `libastcenc-shared` | — |
-| **Windows Editor** | x86_64 | `Plugins/x64/astcenc-sse4.1-shared.dll` | `astcenc-sse4.1-shared.dll` | SSE4.1 |
+| **macOS** | Editor / OSXUniversal Standalone | `Plugins/Mac/libastcenc-shared.dylib` | `libastcenc-shared` | Universal (x86_64 + arm64) |
+| **Windows** | Editor / x86_64 Standalone | `Plugins/x64/astcenc-sse4.1-shared.dll` | `astcenc-sse4.1-shared.dll` | SSE4.1 |
+| **Linux** | Editor / x86_64 Standalone *(按需编译)* | `Plugins/Linux/x86_64/libastcenc-sse4.1-shared.so` | `astcenc-sse4.1-shared` | SSE4.1 |
 
 > **说明**：
 > 1. 当前 `astcenc_api.cs` 中 Android 平台的 `LibraryName` 固定为 `"libastcenc-neon-shared"`，对应 `arm64-v8a` 的 `.so`；如需在 `armeabi-v7a` 设备上运行，请统一 `.so` 命名或在 `astcenc_api.cs` 中根据架构区分库名。
-> 2. 当前 `astcenc_api.cs` 中的条件编译宏仅覆盖了 `UNITY_IOS && !UNITY_EDITOR`、`UNITY_ANDROID && !UNITY_EDITOR`、`UNITY_EDITOR_OSX` 和 `UNITY_EDITOR_WIN`，不包含桌面 Standalone 构建宏。
+> 2. Linux x86_64 原生库可通过 `./scripts/build-linux-astcenc.sh` 从 `ARM-software/astc-encoder` v4.4.0 一键编译生成（CI 中会自动编译用于 Linux Unity 测试与构建）。
 
 ---
 
@@ -267,6 +268,14 @@ flowchart TD
 - **非托管内存管理**：直接调用 `CompressTexture` 返回的 `AstcRaw` 持有 `Marshal.AllocHGlobal` 分配的原生内存，务必通过 `using` 或手动调用 `Dispose()` 及时释放。
 - **GC 开销**：`EncodeToASTC` 会分配托管 `byte[]` 并复制全部压缩数据，不建议在高频逻辑中使用；纯运行时纹理压缩请优先使用 `Compress` 或 `CompressTexture` + `LoadRawTextureData`。
 - **`.astc` 导出与 Mipmap**：标准 `.astc` 容器格式仅描述单层图像尺寸，若只需导出单张 `.astc` 文件，建议输入无 Mipmap 链的纹理。
+
+---
+
+## 多平台 CI 构建与端到端测试
+
+仓库已配置基于 **GitHub Actions + GameCI** 的自动化测试与多平台构建流水线（[`.github/workflows/unity-multiplatform-e2e.yml`](.github/workflows/unity-multiplatform-e2e.yml)），覆盖 EditMode/PlayMode 单元测试、Linux/Windows/macOS Standalone Player 端到端运行、Android ARM64 APK 打包与模拟器验证、以及 iOS Xcode 静态库链接校验。
+
+详细配置步骤（Unity License Secrets、触发方式及本地测试）请参阅 [多平台构建与端到端测试指南](docs/CI_E2E_GUIDE.md)。
 
 ---
 

@@ -12,25 +12,34 @@ public class Sample : MonoBehaviour
 
     void Start()
     {
+        if (inputTexture == null)
+        {
+            Debug.LogWarning("Sample: inputTexture is not assigned.");
+            return;
+        }
+
         using (AstcRaw raw = inputTexture.CompressTexture(TextureType.Default, BlockSize.ASTC_6x6, CompressQuality.Fast))
         {
-            if(raw != null)
+            if (raw != null)
             {
                 raw.ThrowIfDisposed();
 
-                outputTexture = new Texture2D(inputTexture.width, inputTexture.width, TextureFormat.ASTC_6x6, inputTexture.mipmapCount > 0, false);
-                outputTexture.name = inputTexture.name;
-                outputTexture.LoadRawTextureData(raw);
-                outputTexture.Apply(true, true);
+                if (SystemInfo.SupportsTextureFormat(TextureFormat.ASTC_6x6))
+                {
+                    outputTexture = new Texture2D(inputTexture.width, inputTexture.height, TextureFormat.ASTC_6x6, inputTexture.mipmapCount > 1, false);
+                    outputTexture.name = inputTexture.name;
+                    outputTexture.LoadRawTextureData(raw);
+                    outputTexture.Apply(true, true);
+                }
             }
         }
 
         byte[] fileData = inputTexture.EncodeToASTC();
-        string filePath = Path.Combine(Application.dataPath, "outputTexture.astc");
-        using (FileStream fs = File.OpenWrite(filePath))
+        if (fileData != null)
         {
-            fs.Write(fileData);
-            fs.Close();
+            string baseDir = Application.isEditor ? Application.dataPath : Application.persistentDataPath;
+            string filePath = Path.Combine(baseDir, "outputTexture.astc");
+            File.WriteAllBytes(filePath, fileData);
         }
     }
 }

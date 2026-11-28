@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Runtime.InteropServices;
 
 namespace Aperture.Astcenc.Runtime
@@ -14,7 +14,7 @@ namespace Aperture.Astcenc.Runtime
         }
         private IntPtr m_Data;
 
-        internal int Length
+        public int Length
         {
             get
             {
