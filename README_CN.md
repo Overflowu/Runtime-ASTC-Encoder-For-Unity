@@ -142,6 +142,19 @@ public void UpdateAtlasTile(CommandBuffer cmd, Texture tileSrc, Texture2D astcAt
 
 ---
 
+## 性能基准测试
+
+<!-- BENCHMARK_START -->
+> 自动化基准数据（Apple Silicon Metal 真实 GPU vs CPU + Windows AVX2/SSE4.1 + macOS ARM64 NEON）由 [Performance Benchmarks & README Sync](.github/workflows/performance-benchmarks.yml) 自动生成。手动触发该工作流并勾选 `commit_results: true` 即可自动回写最新实测数据至本节与 `docs/Benchmarks.md`。
+<!-- BENCHMARK_END -->
+
+**本地在 Unity 中运行完整基准套件**（自动导出 JSON / CSV / Markdown 至 `Logs/AstcBenchmarks/`）：
+- **Editor 菜单**：**Window → ASTC Encoder → Run Performance Benchmark Suite**（或在 Benchmark & Inspector 窗口点击 **Run Full Suite**）
+- **Test Runner**：运行 EditMode `Performance` 分类（`AstcPerformanceBenchmarks`）
+- **CLI / Player**：`Unity -batchmode -projectPath . -executeMethod Aperture.Astcenc.Editor.AstcPerformanceBenchmarkRunner.RunAllFromCli -quit`，或对编译出的 Player 传入 `-astc-benchmark -astc-bench-out report.json`
+
+---
+
 ## Editor 工具与示例
 
 - **可视化对比与质检窗口**：打开 **Window → ASTC Encoder → Benchmark & Inspector**，同屏对比 CPU 与 GPU 解码结果、放大误差热力图、PSNR / RMSE / 法线角度误差与显存节省率，并支持导出 `.ktx` / `.astc`。
