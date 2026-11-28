@@ -253,7 +253,11 @@ namespace Aperture.Astcenc.Runtime
                             out int mipCount,
                             out bool willGenMips))
                     {
+#if UNITY_2022_1_OR_NEWER
                         TextureCreationFlags flags = TextureCreationFlags.DontInitializePixels | TextureCreationFlags.DontUploadUponCreate;
+#else
+                        TextureCreationFlags flags = TextureCreationFlags.None;
+#endif
                         if (mipCount > 1)
                             flags |= TextureCreationFlags.MipChain;
 
