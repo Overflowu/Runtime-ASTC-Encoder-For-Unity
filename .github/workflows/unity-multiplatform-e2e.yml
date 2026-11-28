@@ -20,6 +20,10 @@ on:
         default: true
         type: boolean
 
+permissions:
+  contents: read
+  checks: write
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -116,6 +120,7 @@ jobs:
         with:
           unityVersion: ${{ env.UNITY_VERSION }}
           testMode: EditMode
+          customParameters: -nographics
           artifactsPath: test-results
           githubToken: ${{ secrets.GITHUB_TOKEN }}
 
