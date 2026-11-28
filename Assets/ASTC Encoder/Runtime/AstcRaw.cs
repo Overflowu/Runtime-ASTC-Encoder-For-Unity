@@ -1,5 +1,6 @@
-﻿using System;
+using System;
 using System.Runtime.InteropServices;
+using System.Threading;
 
 namespace Aperture.Astcenc.Runtime
 {
@@ -14,7 +15,7 @@ namespace Aperture.Astcenc.Runtime
         }
         private IntPtr m_Data;
 
-        internal int Length
+        public int Length
         {
             get
             {
@@ -23,13 +24,20 @@ namespace Aperture.Astcenc.Runtime
         }
         private int m_Length;
 
-        private bool m_Disposed;
+        public bool IsDisposed
+        {
+            get
+            {
+                return Volatile.Read(ref m_Disposed) != 0;
+            }
+        }
+        private int m_Disposed;
 
         public AstcRaw(IntPtr data, int length)
         {
             m_Data = data;
             m_Length = length;
-            m_Disposed = false;
+            m_Disposed = 0;
         }
 
         ~AstcRaw()
@@ -39,26 +47,48 @@ namespace Aperture.Astcenc.Runtime
 
         public void ThrowIfDisposed()
         {
-            if (m_Disposed)
+            if (IsDisposed)
                 throw new ObjectDisposedException(GetType().FullName);
+        }
+
+        public void CopyTo(byte[] destination, int destinationOffset = 0)
+        {
+            ThrowIfDisposed();
+            if (destination == null)
+                throw new ArgumentNullException(nameof(destination));
+            if (destinationOffset < 0 || destination.Length - destinationOffset < m_Length)
+                throw new ArgumentOutOfRangeException(nameof(destinationOffset));
+
+            IntPtr data = m_Data;
+            if (m_Length > 0 && data != IntPtr.Zero)
+            {
+                Marshal.Copy(data, destination, destinationOffset, m_Length);
+            }
+        }
+
+        public byte[] ToArray()
+        {
+            ThrowIfDisposed();
+            byte[] result = new byte[m_Length];
+            IntPtr data = m_Data;
+            if (m_Length > 0 && data != IntPtr.Zero)
+            {
+                Marshal.Copy(data, result, 0, m_Length);
+            }
+            return result;
         }
 
         protected virtual void Dispose(bool disposing)
         {
-            if (!m_Disposed)
+            if (Interlocked.Exchange(ref m_Disposed, 1) == 0)
             {
-                if (disposing)
+                IntPtr data = Interlocked.Exchange(ref m_Data, IntPtr.Zero);
+                if (data != IntPtr.Zero)
                 {
-
+                    Marshal.FreeHGlobal(data);
                 }
 
-                if (m_Data != IntPtr.Zero)
-                    Marshal.FreeHGlobal(m_Data);
-
-                m_Data = IntPtr.Zero;
                 m_Length = 0;
-
-                m_Disposed = true;
             }
         }
 

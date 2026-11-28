@@ -1,0 +1,109 @@
+#pragma editor_sync_compilation
+
+#pragma kernel EncodeTex4x4       ASTC_BLOCK_4X4
+#pragma kernel EncodeTex5x5       ASTC_BLOCK_5X5
+#pragma kernel EncodeTex6x6       ASTC_BLOCK_6X6
+#pragma kernel EncodeTex8x8       ASTC_BLOCK_8X8
+#pragma kernel EncodeTex10x10     ASTC_BLOCK_10X10
+#pragma kernel EncodeTex12x12     ASTC_BLOCK_12X12
+
+#pragma kernel EncodeBuf4x4       ASTC_BLOCK_4X4
+#pragma kernel EncodeBuf5x5       ASTC_BLOCK_5X5
+#pragma kernel EncodeBuf6x6       ASTC_BLOCK_6X6
+#pragma kernel EncodeBuf8x8       ASTC_BLOCK_8X8
+#pragma kernel EncodeBuf10x10     ASTC_BLOCK_10X10
+#pragma kernel EncodeBuf12x12     ASTC_BLOCK_12X12
+
+#pragma kernel EncodeTex4x4Fast   ASTC_BLOCK_4X4   ASTC_FAST_ONLY
+#pragma kernel EncodeTex5x5Fast   ASTC_BLOCK_5X5   ASTC_FAST_ONLY
+#pragma kernel EncodeTex6x6Fast   ASTC_BLOCK_6X6   ASTC_FAST_ONLY
+#pragma kernel EncodeTex8x8Fast   ASTC_BLOCK_8X8   ASTC_FAST_ONLY
+#pragma kernel EncodeTex10x10Fast ASTC_BLOCK_10X10 ASTC_FAST_ONLY
+#pragma kernel EncodeTex12x12Fast ASTC_BLOCK_12X12 ASTC_FAST_ONLY
+
+#pragma kernel EncodeBuf4x4Fast   ASTC_BLOCK_4X4   ASTC_FAST_ONLY
+#pragma kernel EncodeBuf5x5Fast   ASTC_BLOCK_5X5   ASTC_FAST_ONLY
+#pragma kernel EncodeBuf6x6Fast   ASTC_BLOCK_6X6   ASTC_FAST_ONLY
+#pragma kernel EncodeBuf8x8Fast   ASTC_BLOCK_8X8   ASTC_FAST_ONLY
+#pragma kernel EncodeBuf10x10Fast ASTC_BLOCK_10X10 ASTC_FAST_ONLY
+#pragma kernel EncodeBuf12x12Fast ASTC_BLOCK_12X12 ASTC_FAST_ONLY
+
+#if defined(ASTC_BLOCK_5X5)
+    #define BLOCK_X 5
+    #define BLOCK_Y 5
+#elif defined(ASTC_BLOCK_6X6)
+    #define BLOCK_X 6
+    #define BLOCK_Y 6
+#elif defined(ASTC_BLOCK_8X8)
+    #define BLOCK_X 8
+    #define BLOCK_Y 8
+#elif defined(ASTC_BLOCK_10X10)
+    #define BLOCK_X 10
+    #define BLOCK_Y 10
+#elif defined(ASTC_BLOCK_12X12)
+    #define BLOCK_X 12
+    #define BLOCK_Y 12
+#else
+    #define BLOCK_X 4
+    #define BLOCK_Y 4
+#endif
+
+Texture2D<float4> _AstcSourceTex;
+RWTexture2D<uint4> _AstcDestTex;
+RWStructuredBuffer<uint4> _AstcDestBuffer;
+
+uint _AstcSrcWidth;
+uint _AstcSrcHeight;
+uint _AstcMipLevel;
+uint _AstcBlockCountX;
+uint _AstcBlockCountY;
+uint _AstcBufferBlockOffset;
+uint _AstcMode;
+uint _AstcIsSRGB;
+uint _AstcUseAlphaWeight;
+uint _AstcQuality;
+
+#include "../Gpu/Shaders/AstcGpuCore.hlsl"
+
+void DispatchToTexture(uint3 id)
+{
+    if (id.x >= _AstcBlockCountX || id.y >= _AstcBlockCountY)
+        return;
+    _AstcDestTex[id.xy] = AstcEncodeBlock(id.x, id.y);
+}
+
+void DispatchToBuffer(uint3 id)
+{
+    if (id.x >= _AstcBlockCountX || id.y >= _AstcBlockCountY)
+        return;
+    uint outIdx = _AstcBufferBlockOffset + id.y * _AstcBlockCountX + id.x;
+    _AstcDestBuffer[outIdx] = AstcEncodeBlock(id.x, id.y);
+}
+
+[numthreads(8, 8, 1)] void EncodeTex4x4(uint3 id : SV_DispatchThreadID)       { DispatchToTexture(id); }
+[numthreads(8, 8, 1)] void EncodeTex5x5(uint3 id : SV_DispatchThreadID)       { DispatchToTexture(id); }
+[numthreads(8, 8, 1)] void EncodeTex6x6(uint3 id : SV_DispatchThreadID)       { DispatchToTexture(id); }
+[numthreads(8, 4, 1)] void EncodeTex8x8(uint3 id : SV_DispatchThreadID)       { DispatchToTexture(id); }
+[numthreads(8, 4, 1)] void EncodeTex10x10(uint3 id : SV_DispatchThreadID)     { DispatchToTexture(id); }
+[numthreads(8, 4, 1)] void EncodeTex12x12(uint3 id : SV_DispatchThreadID)     { DispatchToTexture(id); }
+
+[numthreads(8, 8, 1)] void EncodeBuf4x4(uint3 id : SV_DispatchThreadID)       { DispatchToBuffer(id); }
+[numthreads(8, 8, 1)] void EncodeBuf5x5(uint3 id : SV_DispatchThreadID)       { DispatchToBuffer(id); }
+[numthreads(8, 8, 1)] void EncodeBuf6x6(uint3 id : SV_DispatchThreadID)       { DispatchToBuffer(id); }
+[numthreads(8, 4, 1)] void EncodeBuf8x8(uint3 id : SV_DispatchThreadID)       { DispatchToBuffer(id); }
+[numthreads(8, 4, 1)] void EncodeBuf10x10(uint3 id : SV_DispatchThreadID)     { DispatchToBuffer(id); }
+[numthreads(8, 4, 1)] void EncodeBuf12x12(uint3 id : SV_DispatchThreadID)     { DispatchToBuffer(id); }
+
+[numthreads(8, 8, 1)] void EncodeTex4x4Fast(uint3 id : SV_DispatchThreadID)   { DispatchToTexture(id); }
+[numthreads(8, 8, 1)] void EncodeTex5x5Fast(uint3 id : SV_DispatchThreadID)   { DispatchToTexture(id); }
+[numthreads(8, 8, 1)] void EncodeTex6x6Fast(uint3 id : SV_DispatchThreadID)   { DispatchToTexture(id); }
+[numthreads(8, 4, 1)] void EncodeTex8x8Fast(uint3 id : SV_DispatchThreadID)   { DispatchToTexture(id); }
+[numthreads(8, 4, 1)] void EncodeTex10x10Fast(uint3 id : SV_DispatchThreadID) { DispatchToTexture(id); }
+[numthreads(8, 4, 1)] void EncodeTex12x12Fast(uint3 id : SV_DispatchThreadID) { DispatchToTexture(id); }
+
+[numthreads(8, 8, 1)] void EncodeBuf4x4Fast(uint3 id : SV_DispatchThreadID)   { DispatchToBuffer(id); }
+[numthreads(8, 8, 1)] void EncodeBuf5x5Fast(uint3 id : SV_DispatchThreadID)   { DispatchToBuffer(id); }
+[numthreads(8, 8, 1)] void EncodeBuf6x6Fast(uint3 id : SV_DispatchThreadID)   { DispatchToBuffer(id); }
+[numthreads(8, 4, 1)] void EncodeBuf8x8Fast(uint3 id : SV_DispatchThreadID)   { DispatchToBuffer(id); }
+[numthreads(8, 4, 1)] void EncodeBuf10x10Fast(uint3 id : SV_DispatchThreadID) { DispatchToBuffer(id); }
+[numthreads(8, 4, 1)] void EncodeBuf12x12Fast(uint3 id : SV_DispatchThreadID) { DispatchToBuffer(id); }

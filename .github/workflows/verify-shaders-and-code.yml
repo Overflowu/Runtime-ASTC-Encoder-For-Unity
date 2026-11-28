@@ -1,0 +1,66 @@
+name: Verify Shaders and Unity Metadata
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-hlsl-and-meta:
+    name: Verify HLSL Shaders & Unity .meta Integrity
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Preprocess all HLSL block-size and Fast-only variants
+        run: |
+          set -e
+          SHADERS="Assets/ASTC Encoder/Runtime/Gpu/Shaders"
+          for bx in 4 5 6 8 10 12; do
+            clang -E -P -x c -I"$SHADERS" -DBLOCK_X=$bx -DBLOCK_Y=$bx "$SHADERS/AstcGpuCore.hlsl" > /dev/null
+            clang -E -P -x c -I"$SHADERS" -DBLOCK_X=$bx -DBLOCK_Y=$bx -DASTC_FAST_ONLY=1 "$SHADERS/AstcGpuCore.hlsl" > /dev/null
+          done
+          clang -E -P -x c "Assets/ASTC Encoder/Runtime/Resources/AstcGpuMipGenerator.compute" > /dev/null
+          echo "All HLSL shader variants preprocessed cleanly!"
+
+      - name: Verify Unity .meta files and GUID uniqueness
+        run: |
+          python3 - <<'EOF'
+          import os, re, sys
+
+          root = "Assets/ASTC Encoder"
+          guids = {}
+          missing = []
+          for dirpath, dirnames, filenames in os.walk(root):
+              dirnames[:] = [d for d in dirnames if not d.endswith("~") and not d.startswith(".")]
+              for d in dirnames:
+                  p = os.path.join(dirpath, d)
+                  if not os.path.exists(p + ".meta"):
+                      missing.append(p)
+              for f in filenames:
+                  if f.endswith(".meta"):
+                      mpath = os.path.join(dirpath, f)
+                      txt = open(mpath, encoding="utf-8", errors="ignore").read()
+                      m = re.search(r"^guid:\s*([0-9a-fA-F]{32})\s*$", txt, re.M)
+                      if not m:
+                          print(f"ERROR: Invalid or missing GUID in {mpath}")
+                          sys.exit(1)
+                      g = m.group(1).lower()
+                      if g in guids:
+                          print(f"ERROR: Duplicate GUID {g} in {mpath} and {guids[g]}")
+                          sys.exit(1)
+                      guids[g] = mpath
+                  else:
+                      p = os.path.join(dirpath, f)
+                      if not os.path.exists(p + ".meta"):
+                          missing.append(p)
+
+          if missing:
+              print("ERROR: Missing .meta files for:")
+              for m in missing:
+                  print("  -", m)
+              sys.exit(1)
+          print(f"OK: Verified {len(guids)} unique Unity .meta GUIDs with zero missing .meta files.")
+          EOF

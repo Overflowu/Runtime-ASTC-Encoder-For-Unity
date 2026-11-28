@@ -65,3 +65,7 @@ Thumbs.db
 
 # Mac Finder Cache
 .DS_Store
+
+# Generated sample output
+/Assets/outputTexture.astc
+/Assets/outputTexture.astc.meta

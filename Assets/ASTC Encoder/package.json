@@ -1,10 +1,25 @@
 {
   "name": "com.aperture.astcenc",
   "displayName": "Runtime ASTC Encoder",
-  "version": "1.0.0",
+  "version": "2.3.0",
   "unity": "2021.3",
-  "keywords": ["Texture", "ASTC", "Runtime", "astcenc"],
-  "description": "Compress texture to astc format at runtime.",
+  "keywords": ["Texture", "ASTC", "Runtime", "astcenc", "GPU", "ComputeShader", "KTX"],
+  "description": "High-performance runtime ASTC texture compression (GPU Compute + native ARM astc-encoder CPU), GPU mipmap generation, KTX v1 disk caching, and Editor benchmarking for Unity.",
+  "license": "MIT",
+  "documentationUrl": "https://github.com/Overflowu/Runtime-ASTC-Encoder-For-Unity/blob/master/docs/API.md",
+  "changelogUrl": "https://github.com/Overflowu/Runtime-ASTC-Encoder-For-Unity/blob/master/Assets/ASTC%20Encoder/CHANGELOG.md",
+  "licensesUrl": "https://github.com/Overflowu/Runtime-ASTC-Encoder-For-Unity/blob/master/Assets/ASTC%20Encoder/LICENSE.md",
+  "author": {
+    "name": "Overflowu",
+    "url": "https://github.com/Overflowu/Runtime-ASTC-Encoder-For-Unity"
+  },
+  "samples": [
+    {
+      "displayName": "Basic Usage",
+      "description": "Runtime ASTC compression sample demonstrating Auto/GPU/CPU backends, async encoding, GPU mipmap generation, and persistent KTX v1 disk caching.",
+      "path": "Samples~/BasicUsage"
+    }
+  ],
   "dependencies": {
   }
 }

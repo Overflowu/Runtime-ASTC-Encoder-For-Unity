@@ -5,32 +5,52 @@ using UnityEngine;
 public class Sample : MonoBehaviour
 {
     /// <summary>
-    /// input texture should be read/write enabled and uncompressed
+    /// Input texture (CPU backend requires Read/Write enabled; GPU backend also supports non-readable textures).
     /// </summary>
     public Texture2D inputTexture;
     public Texture2D outputTexture;
+    public BlockSize blockSize = BlockSize.ASTC_6x6;
+    public CompressQuality quality = CompressQuality.Fast;
+    public EncodeBackend backend = EncodeBackend.Auto;
+
+    private bool m_OwnsOutputTexture;
 
     void Start()
     {
-        using (AstcRaw raw = inputTexture.CompressTexture(TextureType.Default, BlockSize.ASTC_6x6, CompressQuality.Fast))
-        {
-            if(raw != null)
-            {
-                raw.ThrowIfDisposed();
+        if (inputTexture == null)
+            return;
 
-                outputTexture = new Texture2D(inputTexture.width, inputTexture.width, TextureFormat.ASTC_6x6, inputTexture.mipmapCount > 0, false);
-                outputTexture.name = inputTexture.name;
-                outputTexture.LoadRawTextureData(raw);
-                outputTexture.Apply(true, true);
+        outputTexture = inputTexture.CompressToTexture(
+            TextureType.Default,
+            blockSize,
+            quality,
+            includeMipmaps: inputTexture.mipmapCount > 1,
+            backend: backend);
+        m_OwnsOutputTexture = outputTexture != null;
+
+        byte[] fileData = inputTexture.EncodeToASTC(TextureType.Default, blockSize, quality, backend: backend);
+        if (fileData != null)
+        {
+            string outputDir = Application.isEditor ? Application.dataPath : Application.persistentDataPath;
+            string filePath = Path.Combine(outputDir, "outputTexture.astc");
+            try
+            {
+                File.WriteAllBytes(filePath, fileData);
+            }
+            catch (IOException ex)
+            {
+                Debug.LogError($"Failed to write ASTC file to '{filePath}': {ex.Message}");
             }
         }
+    }
 
-        byte[] fileData = inputTexture.EncodeToASTC();
-        string filePath = Path.Combine(Application.dataPath, "outputTexture.astc");
-        using (FileStream fs = File.OpenWrite(filePath))
+    void OnDestroy()
+    {
+        if (m_OwnsOutputTexture && outputTexture != null)
         {
-            fs.Write(fileData);
-            fs.Close();
+            Destroy(outputTexture);
+            outputTexture = null;
+            m_OwnsOutputTexture = false;
         }
     }
 }

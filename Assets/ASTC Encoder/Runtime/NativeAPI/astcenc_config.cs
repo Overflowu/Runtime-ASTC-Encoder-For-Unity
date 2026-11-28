@@ -1,5 +1,8 @@
-﻿using System.Runtime.InteropServices;
+using System;
+using System.Runtime.InteropServices;
 
+namespace Aperture.Astcenc.Runtime.NativeAPI
+{
 /**
  * @brief The config structure.
  *
@@ -161,4 +164,18 @@ public struct astcenc_config
 	 * This option is ineffective for normal maps.
 	 */
 	public float tune_2plane_early_out_limit_correlation;
+
+	/**
+	 * @brief The config enable for the mode0 fast-path search.
+	 *
+	 * If this is set to TUNE_MIN_TEXELS_MODE0 or higher then the early-out fast mode0
+	 * search is enabled. This option is ineffective for 3D block sizes.
+	 */
+	public float tune_search_mode0_enable;
+
+	/**
+	 * @brief The progress callback function pointer, can be IntPtr.Zero.
+	 */
+	public IntPtr progress_callback;
+}
 }

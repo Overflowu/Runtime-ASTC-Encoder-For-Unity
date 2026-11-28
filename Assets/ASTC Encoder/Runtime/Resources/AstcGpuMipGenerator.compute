@@ -1,0 +1,117 @@
+#pragma editor_sync_compilation
+
+#pragma kernel DownsampleColor
+#pragma kernel DownsampleNormal
+
+Texture2D<float4> _MipSrcTex;
+RWTexture2D<float4> _MipDstTex;
+
+uint _MipSrcWidth;
+uint _MipSrcHeight;
+uint _MipDstWidth;
+uint _MipDstHeight;
+uint _MipSrcLevel;
+uint _MipIsSRGBSrc;
+uint _MipIsAlphaWeighted;
+uint _MipIsHdr;
+
+float MipLinearToSRGBScalar(float c)
+{
+    c = saturate(c);
+    return (c <= 0.0031308) ? (c * 12.92) : (1.055 * pow(c, 1.0 / 2.4) - 0.055);
+}
+
+float4 SanitizeHdr(float4 v)
+{
+    return float4(
+        (v.r > 0.0) ? min(v.r, 65504.0) : 0.0,
+        (v.g > 0.0) ? min(v.g, 65504.0) : 0.0,
+        (v.b > 0.0) ? min(v.b, 65504.0) : 0.0,
+        (v.a > 0.0) ? min(v.a, 65504.0) : 0.0);
+}
+
+[numthreads(8, 8, 1)]
+void DownsampleColor(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _MipDstWidth || id.y >= _MipDstHeight)
+        return;
+
+    uint sx0 = id.x * 2u;
+    uint sy0 = id.y * 2u;
+    uint sxEnd = (id.x + 1u == _MipDstWidth) ? (_MipSrcWidth - 1u) : min(sx0 + 1u, _MipSrcWidth - 1u);
+    uint syEnd = (id.y + 1u == _MipDstHeight) ? (_MipSrcHeight - 1u) : min(sy0 + 1u, _MipSrcHeight - 1u);
+
+    float4 sumColor = 0.0;
+    float3 sumWeightedRgb = 0.0;
+    float sumAlphaW = 0.0;
+    float tapCount = 0.0;
+
+    for (uint sy = sy0; sy <= syEnd; ++sy)
+    {
+        for (uint sx = sx0; sx <= sxEnd; ++sx)
+        {
+            float4 c = _MipSrcTex.Load(int3(sx, sy, _MipSrcLevel));
+            if (_MipIsHdr != 0u)
+                c = SanitizeHdr(c);
+
+            sumColor += c;
+            if (_MipIsAlphaWeighted != 0u && _MipIsHdr == 0u)
+            {
+                float w = saturate(c.a);
+                sumWeightedRgb += c.rgb * w;
+                sumAlphaW += w;
+            }
+            tapCount += 1.0;
+        }
+    }
+
+    float invCount = 1.0 / max(tapCount, 1.0);
+    float4 result;
+    if (_MipIsAlphaWeighted != 0u && _MipIsHdr == 0u)
+    {
+        // Premultiplied alpha-weighted box filter prevents dark fringe bleed on transparent borders.
+        float3 rgb = (sumAlphaW > 1e-5) ? (sumWeightedRgb / sumAlphaW) : (sumColor.rgb * invCount);
+        result = float4(rgb, sumAlphaW * invCount);
+    }
+    else
+    {
+        result = sumColor * invCount;
+    }
+
+    _MipDstTex[id.xy] = result;
+}
+
+float3 UnpackTangentNormal(float4 raw)
+{
+    float nx = (_MipIsSRGBSrc != 0u) ? MipLinearToSRGBScalar(raw.r) : saturate(raw.r);
+    float ny = (_MipIsSRGBSrc != 0u) ? MipLinearToSRGBScalar(raw.g) : saturate(raw.g);
+    float2 xy = float2(nx, ny) * 2.0 - 1.0;
+    float z = sqrt(saturate(1.0 - dot(xy, xy)));
+    return float3(xy, z);
+}
+
+[numthreads(8, 8, 1)]
+void DownsampleNormal(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _MipDstWidth || id.y >= _MipDstHeight)
+        return;
+
+    uint sx0 = id.x * 2u;
+    uint sy0 = id.y * 2u;
+    uint sxEnd = (id.x + 1u == _MipDstWidth) ? (_MipSrcWidth - 1u) : min(sx0 + 1u, _MipSrcWidth - 1u);
+    uint syEnd = (id.y + 1u == _MipDstHeight) ? (_MipSrcHeight - 1u) : min(sy0 + 1u, _MipSrcHeight - 1u);
+
+    float3 n = 0.0;
+    for (uint sy = sy0; sy <= syEnd; ++sy)
+    {
+        for (uint sx = sx0; sx <= sxEnd; ++sx)
+        {
+            n += UnpackTangentNormal(_MipSrcTex.Load(int3(sx, sy, _MipSrcLevel)));
+        }
+    }
+
+    float len = length(n);
+    n = (len > 1e-5) ? (n / len) : float3(0.0, 0.0, 1.0);
+    float2 enc = saturate(n.xy * 0.5 + 0.5);
+    _MipDstTex[id.xy] = float4(enc.x, enc.y, 1.0, 1.0);
+}

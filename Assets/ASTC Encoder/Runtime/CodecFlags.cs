@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 
 namespace Aperture.Astcenc.Runtime
 {
@@ -15,6 +15,14 @@ namespace Aperture.Astcenc.Runtime
         * used by BC5n).
         */
         MapNormal = 1 << 0,
+        /**
+         * @brief Enable compression heuristics that assume use of decode_unorm8 decode mode.
+         *
+         * The decode_unorm8 decode mode rounds differently to the decode_fp16 decode mode, so enabling this
+         * flag during compression will allow the compressor to use the correct rounding when selecting
+         * encodings.
+         */
+        UseDecodeUnorm8 = 1 << 1,
         /**
          * @brief Enable alpha weighting.
          *
