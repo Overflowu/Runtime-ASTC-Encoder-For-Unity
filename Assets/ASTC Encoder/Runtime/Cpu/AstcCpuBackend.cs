@@ -176,7 +176,7 @@ namespace Aperture.Astcenc.Runtime
             }
         }
 
-        private static astcenc_swizzle GetSwizzle(GraphicsFormat graphicsFormat, TextureType textureType)
+        internal static astcenc_swizzle GetSwizzle(GraphicsFormat graphicsFormat, TextureType textureType)
         {
             bool isBgr = IsBgrFormat(graphicsFormat);
 
@@ -831,6 +831,22 @@ namespace Aperture.Astcenc.Runtime
                 return Task.FromResult<AstcRaw>(null);
             }
 
+#if UNITY_WEBGL && !UNITY_EDITOR
+            if (AstcWebWorkerBackend.IsReady)
+            {
+                return AstcWebWorkerBackend.CompressTextureAsync(
+                    inputTexture,
+                    textureType,
+                    blockSize,
+                    quality,
+                    includeMipmaps,
+                    useAlphaWeight,
+                    usePerceptual,
+                    alphaScaleRadius,
+                    cancellationToken);
+            }
+#endif
+
             GraphicsFormat graphicsFormat = inputTexture.graphicsFormat;
             astcenc_swizzle swizzle = GetSwizzle(graphicsFormat, textureType);
             int mipCount = includeMipmaps ? inputTexture.mipmapCount : 1;
@@ -1347,6 +1363,25 @@ namespace Aperture.Astcenc.Runtime
                 Debug.LogError($"Raw pixel buffer ({pixelByteLength} bytes) is invalid or smaller than required ({requiredBytes} bytes) for {width}x{height} {sourceFormat}.");
                 return Task.FromResult<AstcRaw>(null);
             }
+
+#if UNITY_WEBGL && !UNITY_EDITOR
+            if (AstcWebWorkerBackend.IsReady)
+            {
+                return AstcWebWorkerBackend.CompressRawPixelsAsync(
+                    pixelPtr,
+                    pixelByteLength,
+                    width,
+                    height,
+                    sourceFormat,
+                    textureType,
+                    blockSize,
+                    quality,
+                    useAlphaWeight,
+                    usePerceptual,
+                    alphaScaleRadius,
+                    cancellationToken);
+            }
+#endif
 
             // Copy caller-owned pixels once so the background task is safe even if the caller frees/reuses its buffer.
             IntPtr copy = Marshal.AllocHGlobal((int)requiredBytes);

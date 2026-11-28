@@ -47,6 +47,7 @@ HEADER_FILES=(
   "astcenc_vecmathlib.h"
   "astcenc_vecmathlib_common_4.h"
   "astcenc_vecmathlib_none_4.h"
+  "astcenc_vecmathlib_sse_4.h"
 )
 
 deterministic_guid() {

@@ -339,19 +339,28 @@ jobs:
           sudo apt-get install -y -qq emscripten
           em++ --version
 
-      - name: Sync WebGL C++ sources and compile-verify WASM static library
+      - name: Sync WebGL C++ sources and compile-verify WASM (Scalar + SIMD128) & Web Worker bundles
         run: |
-          chmod +x .github/scripts/sync-webgl-astcenc.sh
+          chmod +x .github/scripts/sync-webgl-astcenc.sh .github/scripts/build-webgl-worker.sh
           ./.github/scripts/sync-webgl-astcenc.sh build-webgl-src
-          mkdir -p build-webgl-obj
+          mkdir -p build-webgl-obj build-webgl-simd-obj
           for f in build-webgl-src/*.cpp; do
             base="$(basename "$f" .cpp)"
             em++ -O2 -c "$f" -Ibuild-webgl-src -o "build-webgl-obj/${base}.o"
+            em++ -O2 -msimd128 -msse4.1 -c "$f" -Ibuild-webgl-src -o "build-webgl-simd-obj/${base}.o"
           done
           emar rcs build-webgl-obj/libastcenc-wasm.a build-webgl-obj/*.o
+          emar rcs build-webgl-simd-obj/libastcenc-wasm-simd.a build-webgl-simd-obj/*.o
           llvm-nm --defined-only build-webgl-obj/libastcenc-wasm.a | grep "astcenc_config_init"
-          llvm-nm --defined-only build-webgl-obj/libastcenc-wasm.a | grep "astcenc_compress_image"
-          llvm-nm --defined-only build-webgl-obj/libastcenc-wasm.a | grep "astcenc_decompress_image"
+          llvm-nm --defined-only build-webgl-simd-obj/libastcenc-wasm-simd.a | grep "astcenc_compress_image"
+          ./.github/scripts/build-webgl-worker.sh build-webgl-worker
+
+      - name: Upload WebGL Web Worker artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: plugin-webgl-worker
+          path: build-webgl-worker/
+          if-no-files-found: error
 
   package-plugins:
     name: Package Unity Native Plugins

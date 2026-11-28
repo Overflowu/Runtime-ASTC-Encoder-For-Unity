@@ -464,15 +464,34 @@ namespace Aperture.Astcenc.Runtime
 
             try
             {
-                rented = RentContext(key, job.Options);
-                if (rented == null)
+                AstcRaw raw;
+#if UNITY_WEBGL && !UNITY_EDITOR
+                if (AstcWebWorkerBackend.IsReady)
                 {
-                    job.TextureTcs?.TrySetResult(null);
-                    job.RawTcs?.TrySetResult(null);
-                    return;
+                    raw = await AstcWebWorkerBackend.CompressTextureAsync(
+                        tex2d,
+                        job.Options.TextureType,
+                        job.Options.BlockSize,
+                        job.Options.Quality,
+                        job.Options.IncludeMipmaps,
+                        job.Options.UseAlphaWeight,
+                        job.Options.UsePerceptual,
+                        job.Options.AlphaScaleRadius,
+                        job.CancellationToken);
                 }
+                else
+#endif
+                {
+                    rented = RentContext(key, job.Options);
+                    if (rented == null)
+                    {
+                        job.TextureTcs?.TrySetResult(null);
+                        job.RawTcs?.TrySetResult(null);
+                        return;
+                    }
 
-                AstcRaw raw = await AstcCpuBackend.CompressTextureWithContextAsync(tex2d, rented, job.Options.TextureType, job.Options.IncludeMipmaps, job.CancellationToken);
+                    raw = await AstcCpuBackend.CompressTextureWithContextAsync(tex2d, rented, job.Options.TextureType, job.Options.IncludeMipmaps, job.CancellationToken);
+                }
                 if (!job.OutputTexture)
                 {
                     if (!job.RawTcs.TrySetResult(raw) && raw != null)

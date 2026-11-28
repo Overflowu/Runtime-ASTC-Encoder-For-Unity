@@ -199,6 +199,39 @@ namespace Aperture.Astcenc.Runtime
             AstcContextPool.ReleaseAll();
         }
 
+        /// <summary>
+        /// True on WebGL when the browser supports dedicated Web Workers and WebAssembly.
+        /// </summary>
+        public static bool IsWebWorkerSupported => AstcWebWorkerBackend.IsSupported;
+
+        /// <summary>
+        /// True when the WebGL Web Worker pool has finished initializing and async CPU APIs will offload off the main thread.
+        /// </summary>
+        public static bool IsWebWorkerReady => AstcWebWorkerBackend.IsReady;
+
+        /// <summary>
+        /// True when the initialized WebGL Web Worker pool selected the 128-bit WASM SIMD bundle.
+        /// </summary>
+        public static bool IsWebWorkerSimdEnabled => AstcWebWorkerBackend.IsSimdEnabled;
+
+        /// <summary>
+        /// Initializes the non-blocking WebGL Web Worker pool for asynchronous CPU ASTC compression.
+        /// Requires <c>astcenc-worker.js</c> and its WASM bundles (default: <c>StreamingAssets/AstcWebWorker/astcenc-worker.js</c>).
+        /// Does not require SharedArrayBuffer or COOP/COEP headers. Returns false on non-WebGL platforms or if worker loading fails.
+        /// </summary>
+        public static Task<bool> InitializeWebWorkerAsync(string workerScriptUrl = null, int maxWorkers = 0)
+        {
+            return AstcWebWorkerBackend.InitializeAsync(workerScriptUrl, maxWorkers);
+        }
+
+        /// <summary>
+        /// Terminates all WebGL Web Workers and cancels any pending worker compression jobs.
+        /// </summary>
+        public static void ShutdownWebWorker()
+        {
+            AstcWebWorkerBackend.Shutdown();
+        }
+
         public static bool IsSupport(Texture texture, EncodeBackend backend = EncodeBackend.Auto)
         {
             return backend switch

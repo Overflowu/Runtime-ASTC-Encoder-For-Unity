@@ -52,7 +52,7 @@ Located under `Assets/ASTC Encoder/Runtime/Cpu/` and `Runtime/NativeAPI/`:
   - **Android**: Dispatches `libastcenc-neon-shared.so` (`arm64-v8a`) vs `libastcenc-none-shared.so` (`armeabi-v7a`) based on `IntPtr.Size == 8`.
   - **macOS**: Universal dylib (`x86_64` SSE4.1 + `x86_64h` AVX2 + `arm64` NEON).
   - **iOS**: Static NEON library (`__Internal`).
-  - **WebGL (WASM)**: Static Emscripten C++ source plugins under `Plugins/WebGL/` (`__Internal`), automatically compiled by Unity's bundled Emscripten toolchain to avoid cross-version ABI mismatches; runtime clamps thread count to `1` and runs async CPU/cache tasks inline with frame-budgeted `AstcCompressionQueue` dispatching.
+  - **WebGL (WASM)**: Static Emscripten C++ source plugins under `Plugins/WebGL/` (`__Internal`), automatically compiled by Unity's bundled Emscripten toolchain to avoid cross-version ABI mismatches; supports optional **WASM SIMD128** (`-msimd128 -msse4.1` via `AstcWebGLBuildProcessor` / `ASTC_WEBGL_WASM_SIMD`) and non-blocking **Web Worker Pool** offloading (`AstcWebWorkerBackend` + `AstcWebWorker.jslib`, zero SharedArrayBuffer/COOP/COEP required, runtime SIMD auto-dispatch via `WebAssembly.validate`). Without Web Workers, runtime clamps thread count to `1` and runs async CPU/cache tasks inline with frame-budgeted `AstcCompressionQueue` dispatching.
 - **Context Pooling & `parentContext` Sharing (`AstcContextPool.cs` / `AstcContext.cs`)**:
   - Thread-safe static pool eliminates per-call `astcenc_context_alloc` / `free` overhead across all static CPU APIs.
   - Shares read-only block lookup tables via `astcenc 5.x` `parentContext` per `BlockSize`, with safe deferred parent disposal on `Encoder.ReleaseCpuContextPool()` or application quit.

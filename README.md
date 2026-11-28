@@ -141,7 +141,7 @@ public void UpdateAtlasTile(CommandBuffer cmd, Texture tileSrc, Texture2D astcAt
 | **macOS** (11.0+) | Universal (`arm64` NEON + `x86_64` SSE4.1 + `x86_64h` AVX2) | Metal | Editor & Standalone |
 | **Windows x64** | **AVX2** + **SSE4.1** (runtime auto-dispatch) | D3D11 / D3D12 | Both DLLs prebuilt in `Plugins/x64/`, static `/MT` |
 | **Linux x64** | SSE4.1 (CI artifact / local build script) | Vulkan / OpenGL | Built by GitHub Actions or `.github/scripts/build-linux-astcenc.sh` |
-| **WebGL (WASM)** | Static WASM via Emscripten (`__Internal`, single-threaded) | WebGPU / Compute (if supported) | WebGL-only C++ source plugins in `Plugins/WebGL/` compiled automatically by Unity's bundled Emscripten (cross-version ABI safe) |
+| **WebGL (WASM)** | Static WASM (`__Internal`, optional **WASM SIMD128**) + **Web Worker Pool** | WebGPU / Compute (if supported) | `Plugins/WebGL/` C++ sources compiled by Unity's Emscripten (enable SIMD via **Window → ASTC Encoder → WebGL**); optional non-blocking Web Worker (`Encoder.InitializeWebWorkerAsync()`) with runtime SIMD auto-dispatch & zero COOP/COEP |
 | **Other Platforms** | Graceful fallback (`IsCpuSupported == false`) | If Compute supported | Compiles cleanly with no native plugin required |
 
 ---
