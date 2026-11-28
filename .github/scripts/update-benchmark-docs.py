@@ -138,7 +138,7 @@ def build_readme_block(
                 "原始像素直压 `CompressRawPixelsInto` (`512×512 6x6 Fast`)" if is_cn else "Zero-Alloc `CompressRawPixelsInto` (`512×512 6x6 Fast`)",
                 f"**{rp['MedianMs']:.2f} ms** ({rp['ThroughputMPixPerSec']:.1f} MP/s)",
                 f"**{rp['GcAllocBytesPerOp']} B**",
-                "复⽤ NativeArray + `AstcContextPool`" if is_cn else "Caller-owned `NativeArray` + `AstcContextPool`",
+                "复用 NativeArray + `AstcContextPool`" if is_cn else "Caller-owned `NativeArray` + `AstcContextPool`",
             ))
         dc = u_idx.get("DiskCache_TryLoad_512_6x6_FullMips")
         if dc:

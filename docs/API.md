@@ -56,8 +56,8 @@ Frame-budgeted scheduler for runtime streaming and UGC pipelines:
 - Pooled native `AstcContext` with safe `parentContext` table sharing
 
 ### `AstcKtxContainer` & `AstcDiskCache`
-- **`AstcKtxContainer`**: Reads and writes standard KTX v1 files with full mipmap chains and color-space/HDR metadata.
-- **`AstcDiskCache`**: Persistent on-disk cache using atomic `File.Replace` writes and zero-copy `AstcRaw` uploads.
+- **`AstcKtxContainer`**: Reads and writes standard KTX v1 files (`Encode`, `TryDecode`, `LoadTexture`) with full mipmap chains and color-space/HDR metadata.
+- **`AstcDiskCache`** (`static class`): Persistent on-disk KTX v1 cache (`TryLoad`, `TryLoadAsync`, `CompressAndSaveAsync`, `LoadOrCompressAsync`) using atomic `File.Replace` writes and zero-copy `AstcRaw` uploads.
 
 ---
 
@@ -108,7 +108,7 @@ All static CPU `Encoder` APIs already reuse pooled native contexts automatically
 | **HDR 16-bit Float** | `R16` / `R16G16` / `R16G16B16` / `R16G16B16A16` (`_SFloat`) | `HDR` | `F16` (4-ch zero-copy) | `RGBA_ASTC{N}X{N}_UFloat` |
 | **HDR 32-bit Float** | `R32` / `R32G32` / `R32G32B32` / `R32G32B32A32` (`_SFloat`) | `HDR` | `F32` (4-ch zero-copy) | `RGBA_ASTC{N}X{N}_UFloat` |
 
-> The GPU backend also supports additional 2D `RenderTexture` formats such as `B10G11R11_UFloatPack32`.
+> The GPU backend also supports additional 2D `RenderTexture` HDR formats such as `B10G11R11_UFloatPack32` and `E5B9G9R9_UFloatPack32`.
 
 ---
 
@@ -121,21 +121,25 @@ using Aperture.Astcenc.Runtime;
 using Unity.Collections;
 using UnityEngine.Experimental.Rendering;
 
-public int CompressBufferZeroAlloc(
+public bool CompressBufferZeroAlloc(
     NativeArray<byte> rgbaPixels,
+    NativeArray<byte> astcOutput,
     int width,
     int height,
-    NativeArray<byte> astcOutput)
+    out int bytesWritten)
 {
+    var options = AstcCompressOptions.Default;
+    options.BlockSize = BlockSize.ASTC_6x6;
+    options.Quality = CompressQuality.Fast;
+
     return Encoder.CompressRawPixelsInto(
         rgbaPixels,
+        astcOutput,
         width,
         height,
         GraphicsFormat.R8G8B8A8_SRGB,
-        astcOutput,
-        TextureType.Default,
-        BlockSize.ASTC_6x6,
-        CompressQuality.Fast);
+        options,
+        out bytesWritten);
 }
 ```
 
@@ -146,16 +150,26 @@ using System.Threading.Tasks;
 using Aperture.Astcenc.Runtime;
 using UnityEngine;
 
-public async Task<Texture2D> EncodeAndCacheAsync(Texture2D src, string cacheKey, AstcDiskCache cache)
+public async Task<Texture2D> EncodeAndCacheAsync(Texture2D src, string cachePath)
 {
-    if (cache.TryLoad(cacheKey, out Texture2D cached))
+    Texture2D cached = await AstcDiskCache.TryLoadAsync(cachePath);
+    if (cached != null)
         return cached;
 
-    byte[] ktx = await src.EncodeToKTXAsync(TextureType.Default, BlockSize.ASTC_6x6, CompressQuality.Fast);
-    if (ktx != null)
-        cache.Save(cacheKey, ktx);
+    var options = AstcCompressOptions.Default;
+    options.BlockSize = BlockSize.ASTC_6x6;
+    options.Quality = CompressQuality.Fast;
 
-    return ktx != null ? Encoder.LoadFromKTX(ktx) : null;
+    // Compresses, writes KTX v1 atomically to cachePath, and returns the GPU-ready ASTC Texture2D
+    return await AstcDiskCache.CompressAndSaveAsync(src, cachePath, options);
+}
+
+// Or use one-liner load-or-compress with lazy source creation:
+public Task<Texture2D> LoadOrCompressAsync(string cachePath, System.Func<Task<Texture>> loadSource)
+{
+    var options = AstcCompressOptions.Default;
+    options.BlockSize = BlockSize.ASTC_6x6;
+    return AstcDiskCache.LoadOrCompressAsync(cachePath, loadSource, options, destroySourceAfterCompress: true);
 }
 ```
 

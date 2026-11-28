@@ -3,6 +3,7 @@
 [English](README.md) | **简体中文**
 
 [![Verify Shaders & Metadata](https://github.com/Overflowu/Runtime-ASTC-Encoder-For-Unity/actions/workflows/verify-shaders-and-code.yml/badge.svg)](https://github.com/Overflowu/Runtime-ASTC-Encoder-For-Unity/actions/workflows/verify-shaders-and-code.yml)
+[![Unity Multi-Platform E2E](https://github.com/Overflowu/Runtime-ASTC-Encoder-For-Unity/actions/workflows/unity-multiplatform-e2e.yml/badge.svg)](https://github.com/Overflowu/Runtime-ASTC-Encoder-For-Unity/actions/workflows/unity-multiplatform-e2e.yml)
 [![Build Native Plugins](https://github.com/Overflowu/Runtime-ASTC-Encoder-For-Unity/actions/workflows/build-native-plugins.yml/badge.svg)](https://github.com/Overflowu/Runtime-ASTC-Encoder-For-Unity/actions/workflows/build-native-plugins.yml)
 ![Unity 2021.3+](https://img.shields.io/badge/Unity-2021.3%2B-black?logo=unity)
 ![UPM v2.3.0](https://img.shields.io/badge/UPM-v2.3.0-blue)
@@ -15,7 +16,7 @@
 
 ## 为什么选择 Runtime ASTC Encoder？
 
-- **运行时显存直降 50%–89%**：在端侧将下载的 UGC 图片、程序化贴图、捏脸头像或 `RenderTexture` 截图实时压为 ASTC（`4x4`–`12x12`），告别未压缩 RGBA32 显存膨胀。
+- **运行时显存直降 75%–97%**：在端侧将下载的 UGC 图片、程序化贴图、捏脸头像或 `RenderTexture` 截图实时压为 ASTC（`4x4`–`12x12`），告别未压缩 RGBA32 显存膨胀。
 - **真正的 GPU 零回读管线**：支持非可读 `Texture2D` 与 `RenderTexture`，可选**单条 `CommandBuffer` 内一体化 GPU Mipmap 生成 + ASTC 编码**，通过 `CommandBuffer.CopyTexture` 直拷至硬件 ASTC 纹理（兼容非整除尺寸与完整 Mipmap 链）。
 - **双后端统一切换（`Auto` / `Gpu` / `Cpu`）**：默认 `EncodeBackend.Auto`，设备支持时优先走 GPU，不支持时无缝回退至带上下文池化的原生 CPU 编码器。
 - **开箱即用的生产配套**：内置帧预算优先级调度队列（`AstcCompressionQueue`）、标准 KTX v1 容器与原子磁盘缓存（`AstcKtxContainer` / `AstcDiskCache`）、零分配原始像素直压（`CompressRawPixelsInto`）以及 Editor 质检窗口。
@@ -135,11 +136,11 @@ public void UpdateAtlasTile(CommandBuffer cmd, Texture tileSrc, Texture2D astcAt
 
 | 平台 | CPU 原生后端（`astc-encoder v5.7.1`） | GPU Compute 后端 | 说明 |
 | :--- | :--- | :--- | :--- |
-| **iOS**（12.0+） | ARM64 NEON 静态库（`__Internal`） | Metal | CI 同步产出真机+模拟器 `astcenc.xcframework` |
+| **iOS**（12.0+） | ARM64 NEON 静态库（`__Internal`） | Metal | 已内置 `Plugins/iOS/libastcenc-neon-static.a`；CI 同步产出真机+模拟器 `astcenc.xcframework` |
 | **Android**（API 21+） | `arm64-v8a`（NEON）与 `armeabi-v7a`（NONE） | Vulkan / GLES 3.1+ | `c++_static`、16 KB 页对齐、运行时自动 32/64 位分派 |
 | **macOS**（11.0+） | Universal（`arm64` NEON + `x86_64` SSE4.1 + `x86_64h` AVX2） | Metal | Editor & Standalone |
 | **Windows x64** | **AVX2** + **SSE4.1**（运行时自动分派） | D3D11 / D3D12 | 双 DLL 已内置于 `Plugins/x64/`，静态 `/MT` 运行时 |
-| **Linux x64** | SSE4.1（CI 自动构建产物） | Vulkan / OpenGL | 由 GitHub Actions 自动构建 |
+| **Linux x64** | SSE4.1（CI 产物 / 本地构建脚本） | Vulkan / OpenGL | 由 GitHub Actions 或 `.github/scripts/build-linux-astcenc.sh` 构建 |
 | **WebGL / 其他** | 平滑降级（`IsCpuSupported == false`） | 支持 Compute 时可用 | 无需原生库即可正常编译 |
 
 ---
@@ -169,7 +170,7 @@ public void UpdateAtlasTile(CommandBuffer cmd, Texture tileSrc, Texture2D astcAt
 | GPU 零回读 `CompressToTexture` (`1024×1024 6x6 Fast`) | **2.70 ms** (388.7 MP/s) | 0.0 KB | 直拷硬件 ASTC 纹理，无 CPU 回读 |
 | GPU 单 CommandBuffer MipGen + 编码 (`1024×1024+Mips`) | **0.75 ms** (1861.7 MP/s) | 0.0 KB | 11 级 Mip 生成与编码一体化完成 |
 | 法线贴图 GGGR 编码 (`512×512 6x6 Medium`) | GPU **19.26 ms** vs CPU 319.21 ms | 0.0 KB | 平均角度误差：GPU 0.27° vs CPU 0.15° |
-| 原始像素直压 `CompressRawPixelsInto` (`512×512 6x6 Fast`) | **196.09 ms** (1.3 MP/s) | **4096 B** | 复⽤ NativeArray + `AstcContextPool` |
+| 原始像素直压 `CompressRawPixelsInto` (`512×512 6x6 Fast`) | **196.09 ms** (1.3 MP/s) | **4096 B** | 复用 NativeArray + `AstcContextPool` |
 | KTX 磁盘缓存秒开 `AstcDiskCache.TryLoad` (`512×512+Mips`) | **0.66 ms** | 124.8 KB | 一次压缩，后续启动直传 GPU |
 
 #### 跨平台原生 CPU 指令集实测（`astc-encoder v5.7.1`，`512×512` RGBA8 `ASTC_6x6`）
@@ -202,7 +203,10 @@ public void UpdateAtlasTile(CommandBuffer cmd, Texture tileSrc, Texture2D astcAt
 ## 进阶文档
 
 - **[完整 API 参考（docs/API.md）](docs/API.md)** — `Encoder`、`AstcContext`、`AstcCompressionQueue`、`AstcKtxContainer`、`AstcDiskCache`、`AstcRaw`、24 种输入格式映射表，以及零分配原始像素直压、KTX 磁盘缓存、`.astc` 导出示例。
-- **[架构与实现细节（docs/Architecture.md）](docs/Architecture.md)** — 数据流架构图、GPU Compute Shader 算法与寄存器优化、CPU 上下文池化与指令集分派，以及 GitHub Actions 跨平台原生库构建流程。
+- **[架构与实现细节（docs/Architecture.md）](docs/Architecture.md)** — 数据流架构图、GPU Compute Shader 算法与寄存器优化、CPU 上下文池化与指令集分派，以及 GitHub Actions CI 流水线。
+- **[完整性能基准报告（docs/Benchmarks.md）](docs/Benchmarks.md)** — 全矩阵 GPU/CPU 硬件实测数据与回归基线（`docs/benchmarks/baseline.json`）。
+- **[多平台 CI 与端到端测试指南（docs/CI_E2E_GUIDE.md）](docs/CI_E2E_GUIDE.md)** — GameCI EditMode 单元测试与 5 平台端到端构建配置说明。
+- **[更新日志（CHANGELOG.md）](Assets/ASTC%20Encoder/CHANGELOG.md)** — `com.aperture.astcenc` 版本变更记录。
 
 ---
 

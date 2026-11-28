@@ -3,6 +3,7 @@
 **English** | [简体中文](README_CN.md)
 
 [![Verify Shaders & Metadata](https://github.com/Overflowu/Runtime-ASTC-Encoder-For-Unity/actions/workflows/verify-shaders-and-code.yml/badge.svg)](https://github.com/Overflowu/Runtime-ASTC-Encoder-For-Unity/actions/workflows/verify-shaders-and-code.yml)
+[![Unity Multi-Platform E2E](https://github.com/Overflowu/Runtime-ASTC-Encoder-For-Unity/actions/workflows/unity-multiplatform-e2e.yml/badge.svg)](https://github.com/Overflowu/Runtime-ASTC-Encoder-For-Unity/actions/workflows/unity-multiplatform-e2e.yml)
 [![Build Native Plugins](https://github.com/Overflowu/Runtime-ASTC-Encoder-For-Unity/actions/workflows/build-native-plugins.yml/badge.svg)](https://github.com/Overflowu/Runtime-ASTC-Encoder-For-Unity/actions/workflows/build-native-plugins.yml)
 ![Unity 2021.3+](https://img.shields.io/badge/Unity-2021.3%2B-black?logo=unity)
 ![UPM v2.3.0](https://img.shields.io/badge/UPM-v2.3.0-blue)
@@ -15,7 +16,7 @@ A production-ready **runtime ASTC texture compression package** for Unity (`com.
 
 ## Why Runtime ASTC Encoder?
 
-- **Cut Runtime VRAM by 50–89%**: Compress downloaded UGC, procedural textures, avatars, or `RenderTexture` captures directly into ASTC (`4x4`–`12x12`) on device instead of keeping uncompressed RGBA32 in memory.
+- **Cut Runtime VRAM by 75–97%**: Compress downloaded UGC, procedural textures, avatars, or `RenderTexture` captures directly into ASTC (`4x4`–`12x12`) on device instead of keeping uncompressed RGBA32 in memory.
 - **True Zero-Readback GPU Pipeline**: Encode `Texture2D` (including non-readable) and `RenderTexture` — with optional **single-`CommandBuffer` GPU mipmap generation** — straight into hardware ASTC textures via `CommandBuffer.CopyTexture`, including non-multiple dimensions and full mipmap chains.
 - **Unified Dual-Backend (`Auto` / `Gpu` / `Cpu`)**: Defaults to `EncodeBackend.Auto`, preferring GPU when supported and falling back seamlessly to pooled native `astc-encoder` on CPU.
 - **Built for Production**: Includes a frame-budgeted priority scheduler (`AstcCompressionQueue`), standard KTX v1 container & atomic disk cache (`AstcKtxContainer` / `AstcDiskCache`), zero-allocation raw buffer encoding (`CompressRawPixelsInto`), and an Editor Quality Inspector.
@@ -135,11 +136,11 @@ public void UpdateAtlasTile(CommandBuffer cmd, Texture tileSrc, Texture2D astcAt
 
 | Platform | CPU Native (`astc-encoder v5.7.1`) | GPU Compute Backend | Notes |
 | :--- | :--- | :--- | :--- |
-| **iOS** (12.0+) | ARM64 NEON static (`__Internal`) | Metal | CI also builds Device+Simulator `astcenc.xcframework` |
+| **iOS** (12.0+) | ARM64 NEON static (`__Internal`) | Metal | `Plugins/iOS/libastcenc-neon-static.a` prebuilt; CI also builds Device+Simulator `astcenc.xcframework` |
 | **Android** (API 21+) | `arm64-v8a` (NEON) & `armeabi-v7a` (NONE) | Vulkan / GLES 3.1+ | `c++_static`, 16 KB page aligned, auto 32/64-bit dispatch |
 | **macOS** (11.0+) | Universal (`arm64` NEON + `x86_64` SSE4.1 + `x86_64h` AVX2) | Metal | Editor & Standalone |
 | **Windows x64** | **AVX2** + **SSE4.1** (runtime auto-dispatch) | D3D11 / D3D12 | Both DLLs prebuilt in `Plugins/x64/`, static `/MT` |
-| **Linux x64** | SSE4.1 (CI artifact) | Vulkan / OpenGL | Built automatically by GitHub Actions |
+| **Linux x64** | SSE4.1 (CI artifact / local build script) | Vulkan / OpenGL | Built by GitHub Actions or `.github/scripts/build-linux-astcenc.sh` |
 | **WebGL / Others** | Graceful fallback (`IsCpuSupported == false`) | If Compute supported | Compiles cleanly with no native plugin required |
 
 ---
@@ -202,7 +203,10 @@ Measured automatically via GitHub Actions on **`Apple Paravirtual device` (Metal
 ## Documentation
 
 - **[API Reference](docs/API.md)** — Full `Encoder`, `AstcContext`, `AstcCompressionQueue`, `AstcKtxContainer`, `AstcDiskCache`, `AstcRaw`, 24-format mapping table, and advanced code samples (zero-alloc raw pixels, KTX caching, `.astc` export).
-- **[Architecture & Implementation](docs/Architecture.md)** — Dataflow diagram, GPU Compute Shader internals, CPU context pooling & ISA dispatch, and GitHub Actions native build workflow.
+- **[Architecture & Implementation](docs/Architecture.md)** — Dataflow diagram, GPU Compute Shader internals, CPU context pooling & ISA dispatch, and GitHub Actions CI workflows.
+- **[Performance Benchmarks](docs/Benchmarks.md)** — Full hardware-verified GPU/CPU matrix and regression baseline (`docs/benchmarks/baseline.json`).
+- **[Multi-Platform CI & E2E Guide](docs/CI_E2E_GUIDE.md)** — Setup and execution guide for GameCI EditMode tests and 5-platform end-to-end builds.
+- **[Changelog](Assets/ASTC%20Encoder/CHANGELOG.md)** — Version release history for `com.aperture.astcenc`.
 
 ---
 
