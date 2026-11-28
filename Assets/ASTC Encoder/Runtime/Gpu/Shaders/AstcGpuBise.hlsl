@@ -166,39 +166,43 @@ uint AstcUnquantizeColor(uint v, uint q)
 
     if (t == 0u && qu == 0u)
     {
-        if (b == 8u) return v;
-        if (b == 7u) return (v << 1u) | (v >> 6u);
-        if (b == 6u) return (v << 2u) | (v >> 4u);
-        if (b == 5u) return (v << 3u) | (v >> 2u);
-        if (b == 4u) return (v << 4u) | v;
-        if (b == 3u) return (v << 5u) | (v << 2u) | (v >> 1u);
-        if (b == 2u) return v * 85u;
-        return v * 255u;
+        uint r = v << (8u - b);
+        if (b < 8u) r |= v >> max((int)b * 2 - 8, 0);
+        // Exact bit replication for b = 1..8:
+        // b=8: v, b=7: (v<<1)|(v>>6), b=6: (v<<2)|(v>>4), b=5: (v<<3)|(v>>2),
+        // b=4: (v<<4)|v, b=3: (v<<5)|(v<<2)|(v>>1), b=2: v*85, b=1: v*255
+        if (b <= 3u)
+        {
+            r = (b == 3u) ? ((v << 5u) | (v << 2u) | (v >> 1u)) : ((b == 2u) ? (v * 85u) : (v * 255u));
+        }
+        return r & 0xFFu;
     }
 
     uint D = v >> b;
     uint low = v & ((1u << b) - 1u);
     uint A = ((low & 1u) != 0u) ? 0x1FFu : 0u;
-    uint B = 0u;
-    uint C = 0u;
     uint m = low >> 1u;
 
+    uint C = 0u;
+    uint B = 0u;
     if (t != 0u)
     {
-        if (b == 1u)      { C = 204u; B = 0u; }
-        else if (b == 2u) { C = 93u;  B = (m << 8u) | (m << 4u) | (m << 2u) | (m << 1u); }
-        else if (b == 3u) { C = 44u;  B = (m << 7u) | (m << 2u) | m; }
-        else if (b == 4u) { C = 22u;  B = (m << 6u) | m; }
-        else if (b == 5u) { C = 11u;  B = (m << 5u) | (m >> 2u); }
-        else              { C = 5u;   B = (m << 4u) | (m >> 4u); }
+        C = (b == 1u) ? 204u : ((b == 2u) ? 93u : ((b == 3u) ? 44u : ((b == 4u) ? 22u : ((b == 5u) ? 11u : 5u))));
+        B = (b == 1u) ? 0u
+          : (b == 2u) ? ((m << 8u) | (m << 4u) | (m << 2u) | (m << 1u))
+          : (b == 3u) ? ((m << 7u) | (m << 2u) | m)
+          : (b == 4u) ? ((m << 6u) | m)
+          : (b == 5u) ? ((m << 5u) | (m >> 2u))
+                      : ((m << 4u) | (m >> 4u));
     }
     else
     {
-        if (b == 1u)      { C = 113u; B = 0u; }
-        else if (b == 2u) { C = 54u;  B = (m << 8u) | (m << 3u) | (m << 2u); }
-        else if (b == 3u) { C = 26u;  B = (m << 7u) | (m << 1u) | (m >> 1u); }
-        else if (b == 4u) { C = 13u;  B = (m << 6u) | (m >> 1u); }
-        else              { C = 6u;   B = (m << 5u) | (m >> 3u); }
+        C = (b == 1u) ? 113u : ((b == 2u) ? 54u : ((b == 3u) ? 26u : ((b == 4u) ? 13u : 6u)));
+        B = (b == 1u) ? 0u
+          : (b == 2u) ? ((m << 8u) | (m << 3u) | (m << 2u))
+          : (b == 3u) ? ((m << 7u) | (m << 1u) | (m >> 1u))
+          : (b == 4u) ? ((m << 6u) | (m >> 1u))
+                      : ((m << 5u) | (m >> 3u));
     }
 
     uint T = (D * C + B) ^ A;
@@ -343,23 +347,22 @@ uint AstcQuantizeWeight(float w01, uint q, out uint unquantOut)
     return bestCode;
 }
 
-// Writes up to 24 bits into a 128-bit block (little-endian uint4).
+// Writes up to 24 bits into a 128-bit block (little-endian uint4), branchless.
 void AstcWriteBits128(inout uint4 blk, uint bitPos, uint numBits, uint val)
 {
-    if (numBits == 0u) return;
-    uint mask = (numBits >= 32u) ? 0xFFFFFFFFu : ((1u << numBits) - 1u);
+    uint mask = (numBits == 0u) ? 0u : ((numBits >= 32u) ? 0xFFFFFFFFu : ((1u << numBits) - 1u));
     val &= mask;
 
     uint wordIdx = bitPos >> 5u;
     uint bitOff = bitPos & 31u;
 
     uint lo = val << bitOff;
-    uint hi = (bitOff > 0u) ? (val >> (32u - bitOff)) : 0u;
+    uint hi = (bitOff > 0u && (bitOff + numBits > 32u)) ? (val >> (32u - bitOff)) : 0u;
 
-    if (wordIdx == 0u)      { blk.x |= lo; if (bitOff + numBits > 32u) blk.y |= hi; }
-    else if (wordIdx == 1u) { blk.y |= lo; if (bitOff + numBits > 32u) blk.z |= hi; }
-    else if (wordIdx == 2u) { blk.z |= lo; if (bitOff + numBits > 32u) blk.w |= hi; }
-    else                    { blk.w |= lo; }
+    blk.x |= (wordIdx == 0u) ? lo : 0u;
+    blk.y |= ((wordIdx == 1u) ? lo : 0u) | ((wordIdx == 0u) ? hi : 0u);
+    blk.z |= ((wordIdx == 2u) ? lo : 0u) | ((wordIdx == 1u) ? hi : 0u);
+    blk.w |= ((wordIdx == 3u) ? lo : 0u) | ((wordIdx == 2u) ? hi : 0u);
 }
 
 // Reverses all 128 bits of a uint4 (places BISE weight stream at MSB descending).
@@ -399,28 +402,16 @@ void AstcEncodeBise(inout uint4 dst, uint startBit, uint q, uint count)
 
             uint T = AstcPack5Trits(v0 >> b, v1 >> b, v2 >> b, v3 >> b, v4 >> b);
 
-            AstcWriteBits128(dst, bitPos, b, v0 & lowMask); bitPos += b;
-            AstcWriteBits128(dst, bitPos, 2u, T & 3u);       bitPos += 2u;
-
-            if (i + 1u < count)
+            uint tOff = 0u;
+            [loop] for (uint j = 0u; j < 5u; ++j)
             {
-                AstcWriteBits128(dst, bitPos, b, v1 & lowMask); bitPos += b;
-                AstcWriteBits128(dst, bitPos, 2u, (T >> 2u) & 3u); bitPos += 2u;
-            }
-            if (i + 2u < count)
-            {
-                AstcWriteBits128(dst, bitPos, b, v2 & lowMask); bitPos += b;
-                AstcWriteBits128(dst, bitPos, 1u, (T >> 4u) & 1u); bitPos += 1u;
-            }
-            if (i + 3u < count)
-            {
-                AstcWriteBits128(dst, bitPos, b, v3 & lowMask); bitPos += b;
-                AstcWriteBits128(dst, bitPos, 2u, (T >> 5u) & 3u); bitPos += 2u;
-            }
-            if (i + 4u < count)
-            {
-                AstcWriteBits128(dst, bitPos, b, v4 & lowMask); bitPos += b;
-                AstcWriteBits128(dst, bitPos, 1u, (T >> 7u) & 1u); bitPos += 1u;
+                if (i + j >= count) break;
+                uint vj = g_AstcBiseVals[i + j];
+                uint tBits = (j == 2u || j == 4u) ? 1u : 2u;
+                uint tMask = (tBits == 1u) ? 1u : 3u;
+                AstcWriteBits128(dst, bitPos, b, vj & lowMask); bitPos += b;
+                AstcWriteBits128(dst, bitPos, tBits, (T >> tOff) & tMask); bitPos += tBits;
+                tOff += tBits;
             }
         }
     }
@@ -435,18 +426,16 @@ void AstcEncodeBise(inout uint4 dst, uint startBit, uint q, uint count)
 
             uint Q = AstcPack3Quints(v0 >> b, v1 >> b, v2 >> b);
 
-            AstcWriteBits128(dst, bitPos, b, v0 & lowMask); bitPos += b;
-            AstcWriteBits128(dst, bitPos, 3u, Q & 7u);       bitPos += 3u;
-
-            if (i + 1u < count)
+            uint qOff = 0u;
+            [loop] for (uint j = 0u; j < 3u; ++j)
             {
-                AstcWriteBits128(dst, bitPos, b, v1 & lowMask); bitPos += b;
-                AstcWriteBits128(dst, bitPos, 2u, (Q >> 3u) & 3u); bitPos += 2u;
-            }
-            if (i + 2u < count)
-            {
-                AstcWriteBits128(dst, bitPos, b, v2 & lowMask); bitPos += b;
-                AstcWriteBits128(dst, bitPos, 2u, (Q >> 5u) & 3u); bitPos += 2u;
+                if (i + j >= count) break;
+                uint vj = g_AstcBiseVals[i + j];
+                uint qBits = (j == 0u) ? 3u : 2u;
+                uint qMask = (qBits == 3u) ? 7u : 3u;
+                AstcWriteBits128(dst, bitPos, b, vj & lowMask); bitPos += b;
+                AstcWriteBits128(dst, bitPos, qBits, (Q >> qOff) & qMask); bitPos += qBits;
+                qOff += qBits;
             }
         }
     }

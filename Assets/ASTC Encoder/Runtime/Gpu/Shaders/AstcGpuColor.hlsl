@@ -10,78 +10,47 @@
 float AstcLinearToSRGBScalar(float c)
 {
     c = saturate(c);
-    if (c <= 0.0031308)
-        return c * 12.92;
-    // Fast sqrt-based minimax approximation (max error < 0.24/255, 0/256 8-bit round-trip mismatches, zero pow()).
     float s1 = sqrt(c);
     float s2 = sqrt(s1);
     float s3 = sqrt(s2);
-    return saturate(0.662002687 * s1 + 0.684122060 * s2 - 0.323583601 * s3 - 0.0225411470 * c);
+    float hi = saturate(0.662002687 * s1 + 0.684122060 * s2 - 0.323583601 * s3 - 0.0225411470 * c);
+    return (c <= 0.0031308) ? (c * 12.92) : hi;
 }
 
 float3 AstcLinearToSRGB(float3 rgb)
 {
-    return float3(
-        AstcLinearToSRGBScalar(rgb.r),
-        AstcLinearToSRGBScalar(rgb.g),
-        AstcLinearToSRGBScalar(rgb.b));
+    float3 c = saturate(rgb);
+    float3 s1 = sqrt(c);
+    float3 s2 = sqrt(s1);
+    float3 s3 = sqrt(s2);
+    float3 hi = saturate(0.662002687 * s1 + 0.684122060 * s2 - 0.323583601 * s3 - 0.0225411470 * c);
+    return lerp(hi, c * 12.92, float3(c <= 0.0031308));
 }
 
-// Exact Khronos ASTC float -> 16-bit LNS [0, 65535] conversion.
+// Exact Khronos ASTC float4 -> 16-bit LNS [0, 65535] conversion (branchless vectorized).
 // Negative values and NaNs clamp to 0; values >= 65536 clamp to 65535.
-float AstcFloatToLns(float a)
-{
-    if (!(a > (1.0 / 67108864.0)))
-    {
-        return 0.0;
-    }
-    if (a >= 65536.0)
-    {
-        return 65535.0;
-    }
-
-    uint ai = asuint(a);
-    int expVal = (int)((ai >> 23u) & 0xFFu) - 126;
-    uint mantBits = (ai & 0x807FFFFFu) | 0x3F000000u;
-    float mant = asfloat(mantBits);
-
-    float scaled;
-    int lnsExp;
-    if (expVal < -13)
-    {
-        scaled = a * 33554432.0;
-        lnsExp = 0;
-    }
-    else
-    {
-        scaled = (mant - 0.5) * 4096.0;
-        lnsExp = expVal + 14;
-    }
-
-    float lnsMant;
-    if (scaled < 384.0)
-    {
-        lnsMant = scaled * (4.0 / 3.0);
-    }
-    else if (scaled <= 1408.0)
-    {
-        lnsMant = scaled + 128.0;
-    }
-    else
-    {
-        lnsMant = (scaled + 512.0) * (4.0 / 5.0);
-    }
-
-    return clamp(lnsMant + (float)lnsExp * 2048.0 + 1.0, 0.0, 65535.0);
-}
-
 float4 AstcFloatToLns4(float4 c)
 {
-    return float4(
-        AstcFloatToLns(c.r),
-        AstcFloatToLns(c.g),
-        AstcFloatToLns(c.b),
-        AstcFloatToLns(c.a));
+    float4 validPos = float4(c > (1.0 / 67108864.0));
+    float4 tooLarge = float4(c >= 65536.0);
+    float4 safeC = lerp(float4(1.0, 1.0, 1.0, 1.0), min(c, 65536.0), validPos);
+
+    uint4 ai = asuint(safeC);
+    int4 expVal = (int4)((ai >> 23u) & 0xFFu) - 126;
+    uint4 mantBits = (ai & 0x807FFFFFu) | 0x3F000000u;
+    float4 mant = asfloat(mantBits);
+
+    float4 subnorm = float4(expVal < -13);
+    float4 scaled = lerp((mant - 0.5) * 4096.0, safeC * 33554432.0, subnorm);
+    float4 lnsExp = (1.0 - subnorm) * (float4)(expVal + 14);
+
+    float4 isLo = float4(scaled < 384.0);
+    float4 isMid = float4(scaled <= 1408.0);
+    float4 lnsMant = lerp(lerp((scaled + 512.0) * (4.0 / 5.0), scaled + 128.0, isMid), scaled * (4.0 / 3.0), isLo);
+
+    float4 res = clamp(lnsMant + lnsExp * 2048.0 + 1.0, 0.0, 65535.0);
+    res = lerp(res, float4(65535.0, 65535.0, 65535.0, 65535.0), tooLarge);
+    return res * validPos;
 }
 
 uint AstcFloatToHalfU16(float x)

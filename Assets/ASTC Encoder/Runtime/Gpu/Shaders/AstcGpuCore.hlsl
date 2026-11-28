@@ -60,91 +60,81 @@ static uint  g_AstcEpVals[8];
 static uint  g_AstcEpCArr[8];
 static uint  g_AstcEpUqArr[8];
 
-// On-chip per-thread packed RGBA8 pixel cache for small blocks (4x4, 5x5, 6x6 => 16..36 uints).
-// Eliminates redundant texture loads and sRGB pow() conversions across multi-pass candidate search
+// On-chip per-thread packed 4x16-bit working-pixel cache for small blocks (4x4, 5x5, 6x6 => 16..36 uint2s).
+// Eliminates redundant texture loads, sRGB, and HDR LNS conversions across all 29 fetch call sites
 // while keeping VGPR usage bounded for larger 8x8..12x12 blocks.
 #if (BLOCK_X * BLOCK_Y) <= 36
 #define ASTC_ENABLE_PIXEL_CACHE 1
-static uint g_AstcPackedBlock[BLOCK_X * BLOCK_Y];
-static uint g_AstcBlockCacheValid;
+static uint2 g_AstcPackedBlock[BLOCK_X * BLOCK_Y];
 
-uint AstcPackRgba8(float r255, float g255, float b255, float a255)
+uint2 AstcPackRgba16(float4 v)
 {
-    uint r = (uint)clamp(floor(r255 + 0.5), 0.0, 255.0);
-    uint g = (uint)clamp(floor(g255 + 0.5), 0.0, 255.0);
-    uint b = (uint)clamp(floor(b255 + 0.5), 0.0, 255.0);
-    uint a = (uint)clamp(floor(a255 + 0.5), 0.0, 255.0);
-    return r | (g << 8u) | (b << 16u) | (a << 24u);
+    uint4 u = (uint4)clamp(floor(v + 0.5), 0.0, 65535.0);
+    return uint2(u.x | (u.y << 16u), u.z | (u.w << 16u));
 }
 #else
 #define ASTC_ENABLE_PIXEL_CACHE 0
 #endif
 
-// Fetches one texel in the encoder's working space for the current effective mode.
-float4 AstcFetchWorkingPixel(uint baseX, uint baseY, uint x, uint y, uint effMode, out float impWeight)
+// Loads and converts one texel from _AstcSourceTex into working space (single shared sRGB + LNS path).
+float4 AstcLoadWorkingPixel(uint baseX, uint baseY, uint x, uint y, uint effMode, out float impWeight)
 {
     impWeight = 1.0;
-
-#if ASTC_ENABLE_PIXEL_CACHE
-    if (g_AstcBlockCacheValid != 0u)
-    {
-        uint packed = g_AstcPackedBlock[y * BLOCK_X + x];
-        float4 cached = float4(
-            (float)(packed & 0xFFu),
-            (float)((packed >> 8u) & 0xFFu),
-            (float)((packed >> 16u) & 0xFFu),
-            (float)((packed >> 24u) & 0xFFu));
-        if (effMode == ASTC_EFF_LDR_RGBA && _AstcUseAlphaWeight != 0u)
-        {
-            impWeight = max(cached.a * (1.0 / 255.0), 0.02);
-        }
-        return cached;
-    }
-#endif
 
     uint px = min(baseX + x, _AstcSrcWidth - 1u);
     uint py = min(baseY + y, _AstcSrcHeight - 1u);
     float4 raw = _AstcSourceTex.Load(int3(px, py, _AstcMipLevel));
 
-    if (effMode == ASTC_EFF_LDR_NORMAL)
-    {
-        // _AstcIsSRGB means the source view decodes sRGB on load; re-encode to recover the stored bytes
-        // because normal data is always emitted to a linear (UNorm) ASTC target.
-        float nr = (_AstcIsSRGB != 0u) ? AstcLinearToSRGBScalar(raw.r) : saturate(raw.r);
-        float ng = (_AstcIsSRGB != 0u) ? AstcLinearToSRGBScalar(raw.g) : saturate(raw.g);
-        return float4(ng * 255.0, 0.0, 0.0, nr * 255.0);
-    }
-
-    if (effMode == ASTC_EFF_LDR_RGB)
+    if (effMode <= ASTC_EFF_LDR_NORMAL)
     {
         float3 rgb = (_AstcIsSRGB != 0u) ? AstcLinearToSRGB(raw.rgb) : saturate(raw.rgb);
-        return float4(rgb * 255.0, 255.0);
-    }
-
-    if (effMode == ASTC_EFF_LDR_RGBA)
-    {
-        float3 rgb = (_AstcIsSRGB != 0u) ? AstcLinearToSRGB(raw.rgb) : saturate(raw.rgb);
-        float a = saturate(raw.a);
-        if (_AstcUseAlphaWeight != 0u)
+        if (effMode == ASTC_EFF_LDR_NORMAL)
+        {
+            return float4(rgb.g * 255.0, 0.0, 0.0, rgb.r * 255.0);
+        }
+        float a = (effMode == ASTC_EFF_LDR_RGB) ? 1.0 : saturate(raw.a);
+        if (effMode == ASTC_EFF_LDR_RGBA && _AstcUseAlphaWeight != 0u)
         {
             impWeight = max(a, 0.02);
         }
         return float4(rgb * 255.0, a * 255.0);
     }
 
+    // HDR modes: share a single branchless vectorized LNS conversion
+    float4 lns = AstcFloatToLns4(raw);
     if (effMode == ASTC_EFF_HDR_RGB)
     {
-        return float4(AstcFloatToLns(raw.r), AstcFloatToLns(raw.g), AstcFloatToLns(raw.b), 65535.0);
+        return float4(lns.rgb, 65535.0);
     }
-
     if (effMode == ASTC_EFF_HDR_RGB_LDR_ALPHA)
     {
         // Scale LDR alpha [0,1] into [0, 65535] to balance vector norm with LNS RGB.
-        return float4(AstcFloatToLns(raw.r), AstcFloatToLns(raw.g), AstcFloatToLns(raw.b), saturate(raw.a) * 65535.0);
+        return float4(lns.rgb, saturate(raw.a) * 65535.0);
     }
 
     // ASTC_EFF_HDR_RGBA
-    return AstcFloatToLns4(raw);
+    return lns;
+}
+
+// Fetches one texel in the encoder's working space for the current effective mode.
+float4 AstcFetchWorkingPixel(uint baseX, uint baseY, uint x, uint y, uint effMode, out float impWeight)
+{
+#if ASTC_ENABLE_PIXEL_CACHE
+    impWeight = 1.0;
+    uint2 packed = g_AstcPackedBlock[y * BLOCK_X + x];
+    float4 cached = float4(
+        (float)(packed.x & 0xFFFFu),
+        (float)(packed.x >> 16u),
+        (float)(packed.y & 0xFFFFu),
+        (float)(packed.y >> 16u));
+    if (effMode == ASTC_EFF_LDR_RGBA && _AstcUseAlphaWeight != 0u)
+    {
+        impWeight = max(cached.a * (1.0 / 255.0), 0.02);
+    }
+    return cached;
+#else
+    return AstcLoadWorkingPixel(baseX, baseY, x, y, effMode, impWeight);
+#endif
 }
 
 // Per-channel importance weight: weights RGB by alpha when UseAlphaWeight is active,
@@ -315,25 +305,24 @@ void AstcQuantizeEndpoints(
     uqE0 = float4(uqRgb0, 65535.0);
     uqE1 = float4(uqRgb1, 65535.0);
 
-    if (effMode == ASTC_EFF_HDR_RGB_LDR_ALPHA)
+    if (effMode == ASTC_EFF_HDR_RGB_LDR_ALPHA || effMode == ASTC_EFF_HDR_RGBA)
     {
-        uint a0 = (uint)clamp(floor(e0.a / 257.0 + 0.5), 0.0, 255.0);
-        uint a1 = (uint)clamp(floor(e1.a / 257.0 + 0.5), 0.0, 255.0);
-        uint uqA0, uqA1;
-        g_AstcEpCodes[codeOffset + 6u] = AstcQuantizeColor(a0, epQuant, uqA0);
-        g_AstcEpCodes[codeOffset + 7u] = AstcQuantizeColor(a1, epQuant, uqA1);
-        uqE0.a = (float)(uqA0 * 257u);
-        uqE1.a = (float)(uqA1 * 257u);
-    }
-    else if (effMode == ASTC_EFF_HDR_RGBA)
-    {
-        uint cA0, cA1;
-        float uqA0, uqA1;
-        AstcQuantizeHdrAlphaEndpoints(e0.a, e1.a, epQuant, cA0, cA1, uqA0, uqA1);
-        g_AstcEpCodes[codeOffset + 6u] = cA0;
-        g_AstcEpCodes[codeOffset + 7u] = cA1;
-        uqE0.a = uqA0;
-        uqE1.a = uqA1;
+        bool isHdrA = (effMode == ASTC_EFF_HDR_RGBA);
+        uint aIn0 = isHdrA
+            ? (128u + (uint)clamp(floor(e0.a / 512.0 + 0.5), 0.0, 127.0))
+            : (uint)clamp(floor(e0.a / 257.0 + 0.5), 0.0, 255.0);
+        uint aIn1 = isHdrA
+            ? (128u + (uint)clamp(floor(e1.a / 512.0 + 0.5), 0.0, 127.0))
+            : (uint)clamp(floor(e1.a / 257.0 + 0.5), 0.0, 255.0);
+        uint uqA0 = 0u, uqA1 = 0u;
+        [loop] for (uint ai = 0u; ai < 2u; ++ai)
+        {
+            uint uqTmp;
+            g_AstcEpCodes[codeOffset + 6u + ai] = AstcQuantizeColorRange((ai == 0u) ? aIn0 : aIn1, epQuant, isHdrA, uqTmp);
+            if (ai == 0u) uqA0 = uqTmp; else uqA1 = uqTmp;
+        }
+        uqE0.a = isHdrA ? (float)((uqA0 & 0x7Fu) << 9u) : (float)(uqA0 * 257u);
+        uqE1.a = isHdrA ? (float)((uqA1 & 0x7Fu) << 9u) : (float)(uqA1 * 257u);
     }
 }
 
@@ -734,133 +723,27 @@ void AstcComputeWeightGrid2P(
     }
 }
 
-// Evaluates exact hardware-reconstructed MSE for a 1-partition single-plane candidate using g_AstcGrid0.
-float AstcEvalError1PWithGrid(
+// Unified exact hardware-reconstructed candidate error evaluator for 1P (stage=0), Dual-Plane (stage=1), and 2P (stage=2).
+float AstcEvalCandidateError(
     uint baseX, uint baseY,
     uint effMode,
-    float4 e0, float4 e1,
-    uint gridW, uint gridH,
-    uint wQuant, uint epQuant,
-    float bestError,
-    out float4 outChanErr)
-{
-    float4 uqE0, uqE1;
-    AstcQuantizeEndpoints(e0, e1, effMode, epQuant, 0u, uqE0, uqE1);
-
-    uint gridCount = gridW * gridH;
-    [loop] for (uint i = 0u; i < ASTC_MAX_GRID_U; ++i) g_AstcGridUq0[i] = 0u;
-    [loop] for (uint k = 0u; k < gridCount; ++k)
-    {
-        uint uqW;
-        AstcQuantizeWeight(g_AstcGrid0[k], wQuant, uqW);
-        g_AstcGridUq0[k] = uqW;
-    }
-
-    float4 mask = AstcChannelMaskEx(effMode, 4u);
-    float totalErr = 0.0;
-    outChanErr = 0.0;
-    [loop] for (uint y = 0u; y < BLOCK_Y; ++y)
-    {
-        [loop] for (uint x = 0u; x < BLOCK_X; ++x)
-        {
-            float imp;
-            float4 p = AstcFetchWorkingPixel(baseX, baseY, x, y, effMode, imp);
-            uint w64;
-            ASTC_EVAL_INFILL(g_AstcGridUq0, x, y, BLOCK_X, BLOCK_Y, gridW, gridH, w64);
-            float4 recon = lerp(uqE0, uqE1, (float)w64 * (1.0 / 64.0));
-            float4 diff = (p - recon) * mask;
-            float4 chImp = AstcGetChannelImp(effMode, imp);
-            float4 sq = diff * diff * chImp;
-            outChanErr += sq;
-            totalErr += sq.r + sq.g + sq.b + sq.a;
-        }
-        if (totalErr >= bestError)
-            break;
-    }
-    return totalErr;
-}
-
-// Evaluates exact hardware-reconstructed error for a 1-partition dual-plane candidate using g_AstcGrid0/g_AstcGrid1.
-float AstcEvalErrorDualPlaneWithGrid(
-    uint baseX, uint baseY,
-    uint effMode,
+    uint stage,
     uint ccs,
-    float4 e0, float4 e1,
-    uint gridW, uint gridH,
-    uint wQuant, uint epQuant,
-    float bestError)
-{
-    float4 uqE0, uqE1;
-    AstcQuantizeEndpoints(e0, e1, effMode, epQuant, 0u, uqE0, uqE1);
-
-    uint gridCount = gridW * gridH;
-    [loop] for (uint i = 0u; i < ASTC_MAX_GRID_U; ++i) { g_AstcGridUq0[i] = 0u; g_AstcGridUq1[i] = 0u; }
-    [loop] for (uint k = 0u; k < gridCount; ++k)
-    {
-        uint uq0, uq1;
-        AstcQuantizeWeight(g_AstcGrid0[k], wQuant, uq0);
-        AstcQuantizeWeight(g_AstcGrid1[k], wQuant, uq1);
-        g_AstcGridUq0[k] = uq0;
-        g_AstcGridUq1[k] = uq1;
-    }
-
-    float4 mask = AstcChannelMaskEx(effMode, 4u);
-    float totalErr = 0.0;
-    [loop] for (uint y = 0u; y < BLOCK_Y; ++y)
-    {
-        [loop] for (uint x = 0u; x < BLOCK_X; ++x)
-        {
-            float imp;
-            float4 p = AstcFetchWorkingPixel(baseX, baseY, x, y, effMode, imp);
-            uint w0;
-            uint w1;
-            ASTC_EVAL_INFILL(g_AstcGridUq0, x, y, BLOCK_X, BLOCK_Y, gridW, gridH, w0);
-            ASTC_EVAL_INFILL(g_AstcGridUq1, x, y, BLOCK_X, BLOCK_Y, gridW, gridH, w1);
-            float4 recon = lerp(uqE0, uqE1, (float)w0 * (1.0 / 64.0));
-            float p1Val = lerp(AstcGetChannel(uqE0, ccs), AstcGetChannel(uqE1, ccs), (float)w1 * (1.0 / 64.0));
-            recon = AstcSetChannel(recon, ccs, p1Val);
-
-            if (effMode == ASTC_EFF_LDR_NORMAL)
-            {
-                float2 nOrig = float2(p.w, p.x) * (2.0 / 255.0) - 1.0;
-                float zOrig = sqrt(saturate(1.0 - dot(nOrig, nOrig)));
-                float2 nRec = float2(recon.a, recon.r) * (2.0 / 255.0) - 1.0;
-                float zRec = sqrt(saturate(1.0 - dot(nRec, nRec)));
-                totalErr += max(0.0, 1.0 - (dot(nOrig, nRec) + zOrig * zRec));
-            }
-            else
-            {
-                float4 diff = (p - recon) * mask;
-                if (effMode == ASTC_EFF_LDR_RGBA && _AstcUseAlphaWeight != 0u)
-                {
-                    totalErr += dot(diff.rgb, diff.rgb) * imp + diff.a * diff.a;
-                }
-                else
-                {
-                    totalErr += dot(diff, diff);
-                }
-            }
-        }
-        if (totalErr >= bestError)
-            break;
-    }
-    return totalErr;
-}
-
-// Evaluates exact hardware-reconstructed MSE for a 2-partition candidate using g_AstcGrid0 and hoisted partition hash.
-float AstcEvalError2PWithGrid(
-    uint baseX, uint baseY,
-    uint effMode,
     AstcPart2Params p2,
     float4 e0_p0, float4 e1_p0,
     float4 e0_p1, float4 e1_p1,
     uint gridW, uint gridH,
     uint wQuant, uint epQuant,
-    float bestError)
+    float bestError,
+    out float4 outChanErr)
 {
+    bool isDual = (stage == 1u);
+    bool isTwoP = (stage == 2u);
     uint epPerPart = AstcGetEpCountForEffMode(effMode);
+    uint partCnt = isTwoP ? 2u : 1u;
+
     float4 uq0_p0 = 0.0, uq1_p0 = 0.0, uq0_p1 = 0.0, uq1_p1 = 0.0;
-    [loop] for (uint pi = 0u; pi < 2u; ++pi)
+    [loop] for (uint pi = 0u; pi < partCnt; ++pi)
     {
         float4 te0 = (pi == 0u) ? e0_p0 : e0_p1;
         float4 te1 = (pi == 0u) ? e1_p0 : e1_p1;
@@ -871,36 +754,72 @@ float AstcEvalError2PWithGrid(
     }
 
     uint gridCount = gridW * gridH;
-    [loop] for (uint i = 0u; i < ASTC_MAX_GRID_U; ++i) g_AstcGridUq0[i] = 0u;
+    [loop] for (uint i = 0u; i < ASTC_MAX_GRID_U; ++i)
+    {
+        g_AstcGridUq0[i] = 0u;
+        if (isDual) g_AstcGridUq1[i] = 0u;
+    }
     [loop] for (uint k = 0u; k < gridCount; ++k)
     {
-        uint uqW;
-        AstcQuantizeWeight(g_AstcGrid0[k], wQuant, uqW);
-        g_AstcGridUq0[k] = uqW;
+        uint uq0;
+        AstcQuantizeWeight(g_AstcGrid0[k], wQuant, uq0);
+        g_AstcGridUq0[k] = uq0;
+        if (isDual)
+        {
+            uint uq1;
+            AstcQuantizeWeight(g_AstcGrid1[k], wQuant, uq1);
+            g_AstcGridUq1[k] = uq1;
+        }
     }
 
     float4 mask = AstcChannelMaskEx(effMode, 4u);
     float totalErr = 0.0;
+    outChanErr = 0.0;
+
     [loop] for (uint y = 0u; y < BLOCK_Y; ++y)
     {
         [loop] for (uint x = 0u; x < BLOCK_X; ++x)
         {
             float imp;
             float4 p = AstcFetchWorkingPixel(baseX, baseY, x, y, effMode, imp);
-            uint part = AstcEvalPartition2(p2, x, y);
-            uint w64;
-            ASTC_EVAL_INFILL(g_AstcGridUq0, x, y, BLOCK_X, BLOCK_Y, gridW, gridH, w64);
-            float4 recon = (part == 0u)
-                ? lerp(uq0_p0, uq1_p0, (float)w64 * (1.0 / 64.0))
-                : lerp(uq0_p1, uq1_p1, (float)w64 * (1.0 / 64.0));
-            float4 diff = (p - recon) * mask;
-            if (effMode == ASTC_EFF_LDR_RGBA && _AstcUseAlphaWeight != 0u)
+            uint w0;
+            ASTC_EVAL_INFILL(g_AstcGridUq0, x, y, BLOCK_X, BLOCK_Y, gridW, gridH, w0);
+
+            float4 recon;
+            if (isTwoP)
             {
-                totalErr += dot(diff.rgb, diff.rgb) * imp + diff.a * diff.a;
+                uint part = AstcEvalPartition2(p2, x, y);
+                recon = (part == 0u)
+                    ? lerp(uq0_p0, uq1_p0, (float)w0 * (1.0 / 64.0))
+                    : lerp(uq0_p1, uq1_p1, (float)w0 * (1.0 / 64.0));
             }
             else
             {
-                totalErr += dot(diff, diff);
+                recon = lerp(uq0_p0, uq1_p0, (float)w0 * (1.0 / 64.0));
+                if (isDual)
+                {
+                    uint w1;
+                    ASTC_EVAL_INFILL(g_AstcGridUq1, x, y, BLOCK_X, BLOCK_Y, gridW, gridH, w1);
+                    float p1Val = lerp(AstcGetChannel(uq0_p0, ccs), AstcGetChannel(uq1_p0, ccs), (float)w1 * (1.0 / 64.0));
+                    recon = AstcSetChannel(recon, ccs, p1Val);
+                }
+            }
+
+            if (isDual && effMode == ASTC_EFF_LDR_NORMAL)
+            {
+                float2 nOrig = float2(p.w, p.x) * (2.0 / 255.0) - 1.0;
+                float zOrig = sqrt(saturate(1.0 - dot(nOrig, nOrig)));
+                float2 nRec = float2(recon.a, recon.r) * (2.0 / 255.0) - 1.0;
+                float zRec = sqrt(saturate(1.0 - dot(nRec, nRec)));
+                totalErr += max(0.0, 1.0 - (dot(nOrig, nRec) + zOrig * zRec));
+            }
+            else
+            {
+                float4 diff = (p - recon) * mask;
+                float4 chImp = AstcGetChannelImp(effMode, imp);
+                float4 sq = diff * diff * chImp;
+                if (stage == 0u) outChanErr += sq;
+                totalErr += sq.r + sq.g + sq.b + sq.a;
             }
         }
         if (totalErr >= bestError)
@@ -1020,106 +939,11 @@ void AstcFitBothPartitions2P(
     outE1_p1 = AstcClampWorkingColor(mean1 + axis1 * maxT1, effMode);
 }
 
-// Post-quantization ideal endpoint refit for 1P single-plane blocks:
-// Solves closed-form 2x2 least squares against the exact hardware-interpolated quantized weights,
-// adopting the refitted endpoints only if they strictly reduce exact reconstruction error.
-void AstcRefitEndpoints1P(
+// Unified post-quantization ideal endpoint refit for 1P single-plane and Dual-Plane blocks.
+void AstcRefitEndpoints(
     uint baseX, uint baseY,
     uint effMode,
-    uint gridW, uint gridH,
-    uint epQuant,
-    float4 curUqE0, float4 curUqE1)
-{
-    float4 mask = AstcChannelMaskEx(effMode, 4u);
-    float origErr = 0.0;
-    float a00_rgb = 0.0, a01_rgb = 0.0, a11_rgb = 0.0;
-    float a00_a   = 0.0, a01_a   = 0.0, a11_a   = 0.0;
-    float4 b0 = 0.0, b1 = 0.0;
-
-    [loop] for (uint y = 0u; y < BLOCK_Y; ++y)
-    {
-        [loop] for (uint x = 0u; x < BLOCK_X; ++x)
-        {
-            float imp;
-            float4 p = AstcFetchWorkingPixel(baseX, baseY, x, y, effMode, imp);
-            float4 chImp = AstcGetChannelImp(effMode, imp);
-            uint w64;
-            ASTC_EVAL_INFILL(g_AstcGridUq0, x, y, BLOCK_X, BLOCK_Y, gridW, gridH, w64);
-            float w = (float)w64 * (1.0 / 64.0);
-            float omw = 1.0 - w;
-
-            float4 recon = lerp(curUqE0, curUqE1, w);
-            float4 diff = (p - recon) * mask;
-            origErr += dot(diff * diff, chImp);
-
-            float wRgb = chImp.x;
-            a00_rgb += wRgb * omw * omw;
-            a01_rgb += wRgb * w * omw;
-            a11_rgb += wRgb * w * w;
-
-            a00_a += omw * omw;
-            a01_a += w * omw;
-            a11_a += w * w;
-
-            b0 += p * (chImp * omw);
-            b1 += p * (chImp * w);
-        }
-    }
-
-    float4 refitE0 = curUqE0;
-    float4 refitE1 = curUqE1;
-    bool changed = false;
-
-    float detRgb = a00_rgb * a11_rgb - a01_rgb * a01_rgb;
-    if (detRgb > 1e-4)
-    {
-        float invDet = 1.0 / detRgb;
-        refitE0.rgb = AstcClampWorkingColor(float4((a11_rgb * b0.rgb - a01_rgb * b1.rgb) * invDet, 0.0), effMode).rgb;
-        refitE1.rgb = AstcClampWorkingColor(float4((a00_rgb * b1.rgb - a01_rgb * b0.rgb) * invDet, 0.0), effMode).rgb;
-        changed = true;
-    }
-
-    float detA = a00_a * a11_a - a01_a * a01_a;
-    if (mask.a > 0.0 && detA > 1e-4)
-    {
-        float invDetA = 1.0 / detA;
-        refitE0.a = AstcClampWorkingColor(float4(0.0, 0.0, 0.0, (a11_a * b0.a - a01_a * b1.a) * invDetA), effMode).a;
-        refitE1.a = AstcClampWorkingColor(float4(0.0, 0.0, 0.0, (a00_a * b1.a - a01_a * b0.a) * invDetA), effMode).a;
-        changed = true;
-    }
-
-    if (!changed) return;
-
-    [loop] for (uint sv = 0u; sv < 8u; ++sv) g_AstcCandEpCodes[sv] = g_AstcEpCodes[sv];
-    float4 uq0, uq1;
-    AstcQuantizeEndpoints(refitE0, refitE1, effMode, epQuant, 0u, uq0, uq1);
-
-    float refitErr = 0.0;
-    [loop] for (uint y2 = 0u; y2 < BLOCK_Y; ++y2)
-    {
-        [loop] for (uint x2 = 0u; x2 < BLOCK_X; ++x2)
-        {
-            float imp;
-            float4 p = AstcFetchWorkingPixel(baseX, baseY, x2, y2, effMode, imp);
-            float4 chImp = AstcGetChannelImp(effMode, imp);
-            uint w64;
-            ASTC_EVAL_INFILL(g_AstcGridUq0, x2, y2, BLOCK_X, BLOCK_Y, gridW, gridH, w64);
-            float4 recon = lerp(uq0, uq1, (float)w64 * (1.0 / 64.0));
-            float4 diff = (p - recon) * mask;
-            refitErr += dot(diff * diff, chImp);
-        }
-    }
-
-    if (refitErr >= origErr)
-    {
-        [loop] for (uint ei = 0u; ei < 8u; ++ei) g_AstcEpCodes[ei] = g_AstcCandEpCodes[ei];
-    }
-}
-
-// Post-quantization ideal endpoint refit for Dual-Plane blocks (independent 2x2 LS per weight plane).
-void AstcRefitEndpointsDualPlane(
-    uint baseX, uint baseY,
-    uint effMode,
+    bool isDualPlane,
     uint ccs,
     uint gridW, uint gridH,
     uint epQuant,
@@ -1141,18 +965,22 @@ void AstcRefitEndpointsDualPlane(
             float imp;
             float4 p = AstcFetchWorkingPixel(baseX, baseY, x, y, effMode, imp);
             float4 chImp = AstcGetChannelImp(effMode, imp);
-            uint w0_64, w1_64;
+            uint w0_64;
             ASTC_EVAL_INFILL(g_AstcGridUq0, x, y, BLOCK_X, BLOCK_Y, gridW, gridH, w0_64);
-            ASTC_EVAL_INFILL(g_AstcGridUq1, x, y, BLOCK_X, BLOCK_Y, gridW, gridH, w1_64);
             float w0 = (float)w0_64 * (1.0 / 64.0);
-            float w1 = (float)w1_64 * (1.0 / 64.0);
             float omw0 = 1.0 - w0;
-            float omw1 = 1.0 - w1;
 
             float4 recon = lerp(curUqE0, curUqE1, w0);
-            recon = AstcSetChannel(recon, ccs, lerp(AstcGetChannel(curUqE0, ccs), AstcGetChannel(curUqE1, ccs), w1));
+            float w1 = w0;
+            if (isDualPlane)
+            {
+                uint w1_64;
+                ASTC_EVAL_INFILL(g_AstcGridUq1, x, y, BLOCK_X, BLOCK_Y, gridW, gridH, w1_64);
+                w1 = (float)w1_64 * (1.0 / 64.0);
+                recon = AstcSetChannel(recon, ccs, lerp(AstcGetChannel(curUqE0, ccs), AstcGetChannel(curUqE1, ccs), w1));
+            }
 
-            if (effMode == ASTC_EFF_LDR_NORMAL)
+            if (isDualPlane && effMode == ASTC_EFF_LDR_NORMAL)
             {
                 float2 nOrig = float2(p.w, p.x) * (2.0 / 255.0) - 1.0;
                 float zOrig = sqrt(saturate(1.0 - dot(nOrig, nOrig)));
@@ -1178,13 +1006,17 @@ void AstcRefitEndpointsDualPlane(
             b0_p0 += p * (chImp * omw0);
             b1_p0 += p * (chImp * w0);
 
-            float p1Imp = AstcGetChannel(chImp, ccs);
-            float p1Val = AstcGetChannel(p, ccs);
-            a00_p1 += p1Imp * omw1 * omw1;
-            a01_p1 += p1Imp * w1 * omw1;
-            a11_p1 += p1Imp * w1 * w1;
-            b0_p1 += p1Val * (p1Imp * omw1);
-            b1_p1 += p1Val * (p1Imp * w1);
+            if (isDualPlane)
+            {
+                float omw1 = 1.0 - w1;
+                float p1Imp = AstcGetChannel(chImp, ccs);
+                float p1Val = AstcGetChannel(p, ccs);
+                a00_p1 += p1Imp * omw1 * omw1;
+                a01_p1 += p1Imp * w1 * omw1;
+                a11_p1 += p1Imp * w1 * w1;
+                b0_p1 += p1Val * (p1Imp * omw1);
+                b1_p1 += p1Val * (p1Imp * w1);
+            }
         }
     }
 
@@ -1202,7 +1034,7 @@ void AstcRefitEndpointsDualPlane(
     }
 
     float detP0A = a00_p0a * a11_p0a - a01_p0a * a01_p0a;
-    if (ccs != 3u && mask.a > 0.0 && detP0A > 1e-4)
+    if ((!isDualPlane || ccs != 3u) && mask.a > 0.0 && detP0A > 1e-4)
     {
         float invDetA = 1.0 / detP0A;
         refitE0.a = AstcClampWorkingColor(float4(0.0, 0.0, 0.0, (a11_p0a * b0_p0.a - a01_p0a * b1_p0.a) * invDetA), effMode).a;
@@ -1211,7 +1043,7 @@ void AstcRefitEndpointsDualPlane(
     }
 
     float detP1 = a00_p1 * a11_p1 - a01_p1 * a01_p1;
-    if (detP1 > 1e-4)
+    if (isDualPlane && detP1 > 1e-4)
     {
         float invDet1 = 1.0 / detP1;
         float maxVal = (effMode >= ASTC_EFF_HDR_RGB) ? 65535.0 : 255.0;
@@ -1236,13 +1068,17 @@ void AstcRefitEndpointsDualPlane(
             float imp;
             float4 p = AstcFetchWorkingPixel(baseX, baseY, x2, y2, effMode, imp);
             float4 chImp = AstcGetChannelImp(effMode, imp);
-            uint w0_64, w1_64;
+            uint w0_64;
             ASTC_EVAL_INFILL(g_AstcGridUq0, x2, y2, BLOCK_X, BLOCK_Y, gridW, gridH, w0_64);
-            ASTC_EVAL_INFILL(g_AstcGridUq1, x2, y2, BLOCK_X, BLOCK_Y, gridW, gridH, w1_64);
             float4 recon = lerp(uq0, uq1, (float)w0_64 * (1.0 / 64.0));
-            recon = AstcSetChannel(recon, ccs, lerp(AstcGetChannel(uq0, ccs), AstcGetChannel(uq1, ccs), (float)w1_64 * (1.0 / 64.0)));
+            if (isDualPlane)
+            {
+                uint w1_64;
+                ASTC_EVAL_INFILL(g_AstcGridUq1, x2, y2, BLOCK_X, BLOCK_Y, gridW, gridH, w1_64);
+                recon = AstcSetChannel(recon, ccs, lerp(AstcGetChannel(uq0, ccs), AstcGetChannel(uq1, ccs), (float)w1_64 * (1.0 / 64.0)));
+            }
 
-            if (effMode == ASTC_EFF_LDR_NORMAL)
+            if (isDualPlane && effMode == ASTC_EFF_LDR_NORMAL)
             {
                 float2 nOrig = float2(p.w, p.x) * (2.0 / 255.0) - 1.0;
                 float zOrig = sqrt(saturate(1.0 - dot(nOrig, nOrig)));
@@ -1307,53 +1143,49 @@ uint4 AstcAssembleBlock(uint baseX, uint baseY, uint effMode, AstcCandidate c)
     }
     else
 #endif
-    if (c.isDualPlane != 0u)
     {
-        AstcComputeWeightGrid1P(baseX, baseY, effMode, c.dualPlaneChannel, uqE0, uqE1, c.gridW, c.gridH);
-        AstcComputePlane1WeightGrid(baseX, baseY, effMode, c.dualPlaneChannel, AstcGetChannel(uqE0, c.dualPlaneChannel), AstcGetChannel(uqE1, c.dualPlaneChannel), c.gridW, c.gridH);
+        bool isDual = (c.isDualPlane != 0u);
+        uint exclCh = isDual ? c.dualPlaneChannel : 4u;
+        AstcComputeWeightGrid1P(baseX, baseY, effMode, exclCh, uqE0, uqE1, c.gridW, c.gridH);
+        if (isDual)
+        {
+            AstcComputePlane1WeightGrid(baseX, baseY, effMode, c.dualPlaneChannel, AstcGetChannel(uqE0, c.dualPlaneChannel), AstcGetChannel(uqE1, c.dualPlaneChannel), c.gridW, c.gridH);
+        }
 
 #if !defined(ASTC_FAST_ONLY)
-        [loop] for (uint zi = 0u; zi < ASTC_MAX_GRID_U; ++zi) { g_AstcGridUq0[zi] = 0u; g_AstcGridUq1[zi] = 0u; }
+        [loop] for (uint zi = 0u; zi < ASTC_MAX_GRID_U; ++zi)
+        {
+            g_AstcGridUq0[zi] = 0u;
+            if (isDual) g_AstcGridUq1[zi] = 0u;
+        }
 #endif
         [loop] for (uint k = 0u; k < gridCount; ++k)
         {
-            uint uq0, uq1;
-            g_AstcBiseVals[2u * k]      = AstcQuantizeWeight(g_AstcGrid0[k], c.wQuant, uq0);
-            g_AstcBiseVals[2u * k + 1u] = AstcQuantizeWeight(g_AstcGrid1[k], c.wQuant, uq1);
+            uint uq0;
+            uint code0 = AstcQuantizeWeight(g_AstcGrid0[k], c.wQuant, uq0);
 #if !defined(ASTC_FAST_ONLY)
             g_AstcGridUq0[k] = uq0;
-            g_AstcGridUq1[k] = uq1;
 #endif
+            if (isDual)
+            {
+                uint uq1;
+                g_AstcBiseVals[2u * k]      = code0;
+                g_AstcBiseVals[2u * k + 1u] = AstcQuantizeWeight(g_AstcGrid1[k], c.wQuant, uq1);
+#if !defined(ASTC_FAST_ONLY)
+                g_AstcGridUq1[k] = uq1;
+#endif
+            }
+            else
+            {
+                g_AstcBiseVals[k] = code0;
+            }
         }
-        totalWeights = gridCount * 2u;
+        if (isDual) totalWeights = gridCount * 2u;
 
 #if !defined(ASTC_FAST_ONLY)
         if (_AstcQuality >= 1u)
         {
-            AstcRefitEndpointsDualPlane(baseX, baseY, effMode, c.dualPlaneChannel, c.gridW, c.gridH, c.epQuant, uqE0, uqE1);
-        }
-#endif
-    }
-    else
-    {
-        AstcComputeWeightGrid1P(baseX, baseY, effMode, 4u, uqE0, uqE1, c.gridW, c.gridH);
-
-#if !defined(ASTC_FAST_ONLY)
-        [loop] for (uint zi = 0u; zi < ASTC_MAX_GRID_U; ++zi) g_AstcGridUq0[zi] = 0u;
-#endif
-        [loop] for (uint k = 0u; k < gridCount; ++k)
-        {
-            uint uqW;
-            g_AstcBiseVals[k] = AstcQuantizeWeight(g_AstcGrid0[k], c.wQuant, uqW);
-#if !defined(ASTC_FAST_ONLY)
-            g_AstcGridUq0[k] = uqW;
-#endif
-        }
-
-#if !defined(ASTC_FAST_ONLY)
-        if (_AstcQuality >= 1u)
-        {
-            AstcRefitEndpoints1P(baseX, baseY, effMode, c.gridW, c.gridH, c.epQuant, uqE0, uqE1);
+            AstcRefitEndpoints(baseX, baseY, effMode, isDual, c.dualPlaneChannel, c.gridW, c.gridH, c.epQuant, uqE0, uqE1);
         }
 #endif
     }
@@ -1396,16 +1228,17 @@ uint4 AstcAssembleBlock(uint baseX, uint baseY, uint effMode, AstcCandidate c)
 
 #if !defined(ASTC_FAST_ONLY)
 
-void AstcTryCandidate1PWithGrid(
+void AstcTryCandidate(
     uint baseX, uint baseY, uint effMode,
-    float4 e0, float4 e1,
+    uint stage, uint ccs, uint partSeed, AstcPart2Params p2,
+    float4 e0_p0, float4 e1_p0, float4 e0_p1, float4 e1_p1,
     uint bm, uint gw, uint gh,
     uint wQ, uint epQ,
     inout AstcCandidate best,
     inout float4 bestChanErr)
 {
     float4 chanErr;
-    float err = AstcEvalError1PWithGrid(baseX, baseY, effMode, e0, e1, gw, gh, wQ, epQ, best.error, chanErr);
+    float err = AstcEvalCandidateError(baseX, baseY, effMode, stage, ccs, p2, e0_p0, e1_p0, e0_p1, e1_p1, gw, gh, wQ, epQ, best.error, chanErr);
     if (err < best.error)
     {
         best.blockMode = bm;
@@ -1413,70 +1246,22 @@ void AstcTryCandidate1PWithGrid(
         best.gridH = gh;
         best.wQuant = wQ;
         best.epQuant = epQ;
-        best.isDualPlane = 0u;
-        best.dualPlaneChannel = 3u;
-        best.isTwoPart = 0u;
-        best.partSeed = 0u;
-        best.error = err;
-        best.e0 = e0;
-        best.e1 = e1;
-        bestChanErr = chanErr;
-    }
-}
-
-void AstcTryCandidateDualPlaneWithGrid(
-    uint baseX, uint baseY, uint effMode,
-    uint ccs,
-    float4 e0, float4 e1,
-    uint bm, uint gw, uint gh,
-    uint wQ, uint epQ,
-    inout AstcCandidate best)
-{
-    float err = AstcEvalErrorDualPlaneWithGrid(baseX, baseY, effMode, ccs, e0, e1, gw, gh, wQ, epQ, best.error);
-    if (err < best.error)
-    {
-        best.blockMode = bm;
-        best.gridW = gw;
-        best.gridH = gh;
-        best.wQuant = wQ;
-        best.epQuant = epQ;
-        best.isDualPlane = 1u;
-        best.dualPlaneChannel = ccs;
-        best.isTwoPart = 0u;
-        best.partSeed = 0u;
-        best.error = err;
-        best.e0 = e0;
-        best.e1 = e1;
-    }
-}
-
-void AstcTryCandidate2PWithGrid(
-    uint baseX, uint baseY, uint effMode,
-    uint partSeed,
-    AstcPart2Params p2,
-    float4 e0_p0, float4 e1_p0,
-    float4 e0_p1, float4 e1_p1,
-    uint bm, uint gw, uint gh,
-    uint wQ, uint epQ,
-    inout AstcCandidate best)
-{
-    float err = AstcEvalError2PWithGrid(baseX, baseY, effMode, p2, e0_p0, e1_p0, e0_p1, e1_p1, gw, gh, wQ, epQ, best.error);
-    if (err < best.error)
-    {
-        best.blockMode = bm;
-        best.gridW = gw;
-        best.gridH = gh;
-        best.wQuant = wQ;
-        best.epQuant = epQ;
-        best.isDualPlane = 0u;
-        best.dualPlaneChannel = 3u;
-        best.isTwoPart = 1u;
-        best.partSeed = partSeed;
+        best.isDualPlane = (stage == 1u) ? 1u : 0u;
+        best.dualPlaneChannel = (stage == 1u) ? ccs : 3u;
+        best.isTwoPart = (stage == 2u) ? 1u : 0u;
+        best.partSeed = (stage == 2u) ? partSeed : 0u;
         best.error = err;
         best.e0 = e0_p0;
         best.e1 = e1_p0;
-        best.e0_p1 = e0_p1;
-        best.e1_p1 = e1_p1;
+        if (stage == 2u)
+        {
+            best.e0_p1 = e0_p1;
+            best.e1_p1 = e1_p1;
+        }
+        if (stage == 0u)
+        {
+            bestChanErr = chanErr;
+        }
     }
 }
 
@@ -1593,9 +1378,6 @@ uint4 AstcEncodeBlock(uint blockXIdx, uint blockYIdx)
     uint baseY = blockYIdx * BLOCK_Y;
 
     bool isHdr = (_AstcMode == ASTC_MODE_HDR_RGB || _AstcMode == ASTC_MODE_HDR_RGBA);
-#if ASTC_ENABLE_PIXEL_CACHE
-    g_AstcBlockCacheValid = 0u;
-#endif
 
     // ------------------------------------------------------------------------
     // Step 1: Scan raw block stats (Void-Extent check + HDR alpha mode resolution)
@@ -1613,7 +1395,7 @@ uint4 AstcEncodeBlock(uint blockXIdx, uint blockYIdx)
             float4 r = _AstcSourceTex.Load(int3(px, py, _AstcMipLevel));
             if (isHdr)
             {
-                // Sanitize NaN / Inf / negative values consistently with AstcFloatToLns & AstcFloatToHalfU16
+                // Sanitize NaN / Inf / negative values consistently with AstcFloatToLns4 & AstcFloatToHalfU16
                 // so a single NaN at (0,0) or +Inf cannot corrupt Void-Extent detection.
                 r = float4(
                     (r.r > 0.0) ? min(r.r, 65504.0) : 0.0,
@@ -1621,23 +1403,6 @@ uint4 AstcEncodeBlock(uint blockXIdx, uint blockYIdx)
                     (r.b > 0.0) ? min(r.b, 65504.0) : 0.0,
                     (r.a > 0.0) ? min(r.a, 65504.0) : 0.0);
             }
-#if ASTC_ENABLE_PIXEL_CACHE
-            else
-            {
-                if (_AstcMode == ASTC_MODE_LDR_NORMAL)
-                {
-                    float nr = (_AstcIsSRGB != 0u) ? AstcLinearToSRGBScalar(r.r) : saturate(r.r);
-                    float ng = (_AstcIsSRGB != 0u) ? AstcLinearToSRGBScalar(r.g) : saturate(r.g);
-                    g_AstcPackedBlock[y * BLOCK_X + x] = AstcPackRgba8(ng * 255.0, 0.0, 0.0, nr * 255.0);
-                }
-                else
-                {
-                    float3 rgb = (_AstcIsSRGB != 0u) ? AstcLinearToSRGB(r.rgb) : saturate(r.rgb);
-                    float a = (_AstcMode == ASTC_MODE_LDR_RGB) ? 1.0 : saturate(r.a);
-                    g_AstcPackedBlock[y * BLOCK_X + x] = AstcPackRgba8(rgb.r * 255.0, rgb.g * 255.0, rgb.b * 255.0, a * 255.0);
-                }
-            }
-#endif
             if (x == 0u && y == 0u) rawFirst = r;
             rawMin = min(rawMin, r);
             rawMax = max(rawMax, r);
@@ -1699,18 +1464,16 @@ uint4 AstcEncodeBlock(uint blockXIdx, uint blockYIdx)
         if (isConst)
         {
             float4 c = rawFirst;
+            float3 rgb = (_AstcIsSRGB != 0u) ? AstcLinearToSRGB(c.rgb) : saturate(c.rgb);
             uint4 c8;
             if (effMode == ASTC_EFF_LDR_NORMAL)
             {
-                float nr = (_AstcIsSRGB != 0u) ? AstcLinearToSRGBScalar(c.r) : saturate(c.r);
-                float ng = (_AstcIsSRGB != 0u) ? AstcLinearToSRGBScalar(c.g) : saturate(c.g);
-                uint g8 = (uint)clamp(floor(ng * 255.0 + 0.5), 0.0, 255.0);
-                uint r8 = (uint)clamp(floor(nr * 255.0 + 0.5), 0.0, 255.0);
+                uint g8 = (uint)clamp(floor(rgb.g * 255.0 + 0.5), 0.0, 255.0);
+                uint r8 = (uint)clamp(floor(rgb.r * 255.0 + 0.5), 0.0, 255.0);
                 c8 = uint4(g8, g8, g8, r8);
             }
             else
             {
-                float3 rgb = (_AstcIsSRGB != 0u) ? AstcLinearToSRGB(c.rgb) : saturate(c.rgb);
                 uint a8 = (effMode == ASTC_EFF_LDR_RGB) ? 255u : (uint)clamp(floor(saturate(c.a) * 255.0 + 0.5), 0.0, 255.0);
                 c8 = uint4(
                     (uint)clamp(floor(rgb.r * 255.0 + 0.5), 0.0, 255.0),
@@ -1737,7 +1500,15 @@ uint4 AstcEncodeBlock(uint blockXIdx, uint blockYIdx)
     }
 
 #if ASTC_ENABLE_PIXEL_CACHE
-    g_AstcBlockCacheValid = (!isHdr) ? 1u : 0u;
+    [loop] for (uint cy = 0u; cy < BLOCK_Y; ++cy)
+    {
+        [loop] for (uint cx = 0u; cx < BLOCK_X; ++cx)
+        {
+            float dummyImp;
+            float4 wp = AstcLoadWorkingPixel(baseX, baseY, cx, cy, effMode, dummyImp);
+            g_AstcPackedBlock[cy * BLOCK_X + cx] = AstcPackRgba16(wp);
+        }
+    }
 #endif
 
     // ------------------------------------------------------------------------
@@ -1824,168 +1595,175 @@ uint4 AstcEncodeBlock(uint blockXIdx, uint blockYIdx)
     else
     {
         float4 bestChanErr = 0.0;
-        if (!isNormal)
+        AstcPart2Params p2Params;
+        p2Params.seed1 = 0u; p2Params.seed2 = 0u; p2Params.seed3 = 0u; p2Params.seed4 = 0u;
+        p2Params.offA = 0u; p2Params.offB = 0u;
+
+        // Unified 3-stage candidate search: stage 0 = 1P, stage 1 = Dual-Plane, stage 2 = 2P (High quality).
+        // Consolidates AstcTryCandidate / AstcEvalCandidateError / AstcComputeWeightGrid1P to a single inlined site.
+        [loop] for (uint stage = 0u; stage < 3u; ++stage)
         {
-            // ------------------------------------------------------------------------
-            // Step 6: Balanced / High Path - Multi-BlockMode Candidate Search (reusing projections per grid)
-            // ------------------------------------------------------------------------
-            uint cand1PCount;
-            if (!hasAlpha)
+            if (stage == 0u && isNormal) continue;
+            if (stage == 2u && (isNormal || _AstcQuality < 2u)) continue;
+
+            uint stageCcs = 4u;
+            uint stageSeed = 0u;
+            float4 sE0_p0 = e0, sE1_p0 = e1;
+            float4 sE0_p1 = 0.0, sE1_p1 = 0.0;
+            uint candCount = 0u;
+
+            if (stage == 0u)
             {
+                if (!hasAlpha)
+                {
 #if BLOCK_X >= 8
-                cand1PCount = 12u;
+                    candCount = 12u;
 #elif BLOCK_X >= 6
-                cand1PCount = 10u;
+                    candCount = 10u;
 #elif BLOCK_X >= 5
-                cand1PCount = 6u;
+                    candCount = 6u;
 #else
-                cand1PCount = 3u;
+                    candCount = 3u;
+#endif
+                }
+                else
+                {
+#if BLOCK_X >= 6
+                    candCount = 8u;
+#elif BLOCK_X >= 5
+                    candCount = 5u;
+#else
+                    candCount = 3u;
+#endif
+                }
+            }
+            else if (stage == 1u)
+            {
+                stageCcs = 3u;
+                if (!isNormal)
+                {
+                    stageCcs = 0u;
+                    float maxChErr = bestChanErr.r;
+                    if (bestChanErr.g > maxChErr) { maxChErr = bestChanErr.g; stageCcs = 1u; }
+                    if (bestChanErr.b > maxChErr) { maxChErr = bestChanErr.b; stageCcs = 2u; }
+                    if (hasAlpha && bestChanErr.a > maxChErr) { stageCcs = 3u; }
+                    AstcFitSubsetEndpoints(baseX, baseY, effMode, stageCcs, 0u, 2u, 1u, sE0_p0, sE1_p0);
+                }
+#if BLOCK_X >= 5
+                candCount = isNormal ? 4u : 3u;
+#else
+                candCount = 2u;
 #endif
             }
             else
             {
-#if BLOCK_X >= 6
-                cand1PCount = 8u;
-#elif BLOCK_X >= 5
-                cand1PCount = 5u;
+                bool smallBlock = (BLOCK_X * BLOCK_Y) < 32u;
+                stageSeed = AstcSelectBestSeed2P(baseX, baseY, effMode);
+                p2Params = AstcPreparePartition2(stageSeed, smallBlock);
+                AstcFitBothPartitions2P(baseX, baseY, effMode, p2Params, sE0_p0, sE1_p0, sE0_p1, sE1_p1);
+#if BLOCK_X >= 5
+                candCount = 4u;
 #else
-                cand1PCount = 3u;
+                candCount = 2u;
 #endif
             }
 
             uint cachedGW = 0u, cachedGH = 0u;
-            [loop] for (uint c1 = 0u; c1 < cand1PCount; ++c1)
+            [loop] for (uint ci = 0u; ci < candCount; ++ci)
             {
                 uint bm, gw, gh, wQ, epQ;
-                if (!hasAlpha)
+                if (stage == 0u)
                 {
-                    if (c1 == 0u)      { bm = 0x251u; gw = 4u; gh = 4u; wQ = ASTC_QUANT_12; epQ = ASTC_QUANT_256; }
-                    else if (c1 == 1u) { bm = 0x242u; gw = 4u; gh = 4u; wQ = ASTC_QUANT_16; epQ = ASTC_QUANT_192; }
-                    else if (c1 == 2u) { bm = 0x252u; gw = 4u; gh = 4u; wQ = ASTC_QUANT_20; epQ = ASTC_QUANT_96;  }
-                    else if (c1 == 3u) { bm = 0x0F2u; gw = 5u; gh = 5u; wQ = ASTC_QUANT_5;  epQ = ASTC_QUANT_256; }
-                    else if (c1 == 4u) { bm = 0x0E3u; gw = 5u; gh = 5u; wQ = ASTC_QUANT_6;  epQ = ASTC_QUANT_192; }
-                    else if (c1 == 5u) { bm = 0x0F3u; gw = 5u; gh = 5u; wQ = ASTC_QUANT_8;  epQ = ASTC_QUANT_64;  }
-                    else if (c1 == 6u) { bm = 0x114u; gw = 6u; gh = 6u; wQ = ASTC_QUANT_3;  epQ = ASTC_QUANT_256; }
-                    else if (c1 == 7u) { bm = 0x108u; gw = 6u; gh = 6u; wQ = ASTC_QUANT_4;  epQ = ASTC_QUANT_80;  }
-                    else if (c1 == 8u) { bm = 0x143u; gw = 6u; gh = 4u; wQ = ASTC_QUANT_6;  epQ = ASTC_QUANT_256; }
-                    else if (c1 == 9u) { bm = 0x04Fu; gw = 4u; gh = 6u; wQ = ASTC_QUANT_6;  epQ = ASTC_QUANT_256; }
-                    else if (c1 == 10u){ bm = 0x046u; gw = 8u; gh = 4u; wQ = ASTC_QUANT_4;  epQ = ASTC_QUANT_192; }
-                    else               { bm = 0x04Au; gw = 4u; gh = 8u; wQ = ASTC_QUANT_4;  epQ = ASTC_QUANT_192; }
+                    if (!hasAlpha)
+                    {
+                        if (ci == 0u)      { bm = 0x251u; gw = 4u; gh = 4u; wQ = ASTC_QUANT_12; epQ = ASTC_QUANT_256; }
+                        else if (ci == 1u) { bm = 0x242u; gw = 4u; gh = 4u; wQ = ASTC_QUANT_16; epQ = ASTC_QUANT_192; }
+                        else if (ci == 2u) { bm = 0x252u; gw = 4u; gh = 4u; wQ = ASTC_QUANT_20; epQ = ASTC_QUANT_96;  }
+                        else if (ci == 3u) { bm = 0x0F2u; gw = 5u; gh = 5u; wQ = ASTC_QUANT_5;  epQ = ASTC_QUANT_256; }
+                        else if (ci == 4u) { bm = 0x0E3u; gw = 5u; gh = 5u; wQ = ASTC_QUANT_6;  epQ = ASTC_QUANT_192; }
+                        else if (ci == 5u) { bm = 0x0F3u; gw = 5u; gh = 5u; wQ = ASTC_QUANT_8;  epQ = ASTC_QUANT_64;  }
+                        else if (ci == 6u) { bm = 0x114u; gw = 6u; gh = 6u; wQ = ASTC_QUANT_3;  epQ = ASTC_QUANT_256; }
+                        else if (ci == 7u) { bm = 0x108u; gw = 6u; gh = 6u; wQ = ASTC_QUANT_4;  epQ = ASTC_QUANT_80;  }
+                        else if (ci == 8u) { bm = 0x143u; gw = 6u; gh = 4u; wQ = ASTC_QUANT_6;  epQ = ASTC_QUANT_256; }
+                        else if (ci == 9u) { bm = 0x04Fu; gw = 4u; gh = 6u; wQ = ASTC_QUANT_6;  epQ = ASTC_QUANT_256; }
+                        else if (ci == 10u){ bm = 0x046u; gw = 8u; gh = 4u; wQ = ASTC_QUANT_4;  epQ = ASTC_QUANT_192; }
+                        else               { bm = 0x04Au; gw = 4u; gh = 8u; wQ = ASTC_QUANT_4;  epQ = ASTC_QUANT_192; }
+                    }
+                    else
+                    {
+                        if (ci == 0u)      { bm = 0x043u; gw = 4u; gh = 4u; wQ = ASTC_QUANT_6;  epQ = ASTC_QUANT_256; }
+                        else if (ci == 1u) { bm = 0x053u; gw = 4u; gh = 4u; wQ = ASTC_QUANT_8;  epQ = ASTC_QUANT_192; }
+                        else if (ci == 2u) { bm = 0x251u; gw = 4u; gh = 4u; wQ = ASTC_QUANT_12; epQ = ASTC_QUANT_96;  }
+                        else if (ci == 3u) { bm = 0x0E2u; gw = 5u; gh = 5u; wQ = ASTC_QUANT_4;  epQ = ASTC_QUANT_192; }
+                        else if (ci == 4u) { bm = 0x0F2u; gw = 5u; gh = 5u; wQ = ASTC_QUANT_5;  epQ = ASTC_QUANT_80;  }
+                        else if (ci == 5u) { bm = 0x114u; gw = 6u; gh = 6u; wQ = ASTC_QUANT_3;  epQ = ASTC_QUANT_96;  }
+                        else if (ci == 6u) { bm = 0x142u; gw = 6u; gh = 4u; wQ = ASTC_QUANT_4;  epQ = ASTC_QUANT_192; }
+                        else               { bm = 0x04Eu; gw = 4u; gh = 6u; wQ = ASTC_QUANT_4;  epQ = ASTC_QUANT_192; }
+                    }
+                }
+                else if (stage == 1u)
+                {
+                    uint4 cfg;
+                    if (isNormal)
+                    {
+                        cfg = (ci == 0u) ? uint4(0x452u, 4u, ASTC_QUANT_5, ASTC_QUANT_256)
+                            : (ci == 1u) ? uint4(0x442u, 4u, ASTC_QUANT_4, ASTC_QUANT_256)
+                            : (ci == 2u) ? uint4(0x4F1u, 5u, ASTC_QUANT_3, ASTC_QUANT_128)
+                                         : uint4(0x4E1u, 5u, ASTC_QUANT_2, ASTC_QUANT_256);
+                    }
+                    else if (!hasAlpha)
+                    {
+                        cfg = (ci == 0u) ? uint4(0x451u, 4u, ASTC_QUANT_3, ASTC_QUANT_256)
+                            : (ci == 1u) ? uint4(0x442u, 4u, ASTC_QUANT_4, ASTC_QUANT_160)
+                                         : uint4(0x4E1u, 5u, ASTC_QUANT_2, ASTC_QUANT_256);
+                    }
+                    else
+                    {
+                        cfg = (ci == 0u) ? uint4(0x451u, 4u, ASTC_QUANT_3, ASTC_QUANT_128)
+                            : (ci == 1u) ? uint4(0x442u, 4u, ASTC_QUANT_4, ASTC_QUANT_48)
+                                         : uint4(0x4E1u, 5u, ASTC_QUANT_2, ASTC_QUANT_160);
+                    }
+                    bm = cfg.x; gw = cfg.y; gh = cfg.y; wQ = cfg.z; epQ = cfg.w;
                 }
                 else
                 {
-                    if (c1 == 0u)      { bm = 0x043u; gw = 4u; gh = 4u; wQ = ASTC_QUANT_6;  epQ = ASTC_QUANT_256; }
-                    else if (c1 == 1u) { bm = 0x053u; gw = 4u; gh = 4u; wQ = ASTC_QUANT_8;  epQ = ASTC_QUANT_192; }
-                    else if (c1 == 2u) { bm = 0x251u; gw = 4u; gh = 4u; wQ = ASTC_QUANT_12; epQ = ASTC_QUANT_96;  }
-                    else if (c1 == 3u) { bm = 0x0E2u; gw = 5u; gh = 5u; wQ = ASTC_QUANT_4;  epQ = ASTC_QUANT_192; }
-                    else if (c1 == 4u) { bm = 0x0F2u; gw = 5u; gh = 5u; wQ = ASTC_QUANT_5;  epQ = ASTC_QUANT_80;  }
-                    else if (c1 == 5u) { bm = 0x114u; gw = 6u; gh = 6u; wQ = ASTC_QUANT_3;  epQ = ASTC_QUANT_96;  }
-                    else if (c1 == 6u) { bm = 0x142u; gw = 6u; gh = 4u; wQ = ASTC_QUANT_4;  epQ = ASTC_QUANT_192; }
-                    else               { bm = 0x04Eu; gw = 4u; gh = 6u; wQ = ASTC_QUANT_4;  epQ = ASTC_QUANT_192; }
+                    uint4 cfg;
+                    if (!hasAlpha)
+                    {
+                        if (ci == 0u)      cfg = uint4(0x042u, 4u, ASTC_QUANT_4, ASTC_QUANT_40);
+                        else if (ci == 1u) cfg = uint4(0x043u, 4u, ASTC_QUANT_6, ASTC_QUANT_24);
+                        else if (ci == 2u) cfg = uint4(0x0F1u, 5u, ASTC_QUANT_3, ASTC_QUANT_24);
+                        else               cfg = uint4(0x0E2u, 5u, ASTC_QUANT_4, ASTC_QUANT_16);
+                    }
+                    else
+                    {
+                        if (ci == 0u)      cfg = uint4(0x051u, 4u, ASTC_QUANT_3, ASTC_QUANT_20);
+                        else if (ci == 1u) cfg = uint4(0x042u, 4u, ASTC_QUANT_4, ASTC_QUANT_16);
+                        else if (ci == 2u) cfg = uint4(0x0E1u, 5u, ASTC_QUANT_2, ASTC_QUANT_24);
+                        else               cfg = uint4(0x0F1u, 5u, ASTC_QUANT_3, ASTC_QUANT_12);
+                    }
+                    bm = cfg.x; gw = cfg.y; gh = cfg.y; wQ = cfg.z; epQ = cfg.w;
                 }
+
                 if (gw != cachedGW || gh != cachedGH)
                 {
-                    AstcComputeWeightGrid1P(baseX, baseY, effMode, 4u, e0, e1, gw, gh);
+                    if (stage == 2u)
+                    {
+                        AstcComputeWeightGrid2P(baseX, baseY, effMode, stageSeed, sE0_p0, sE1_p0, sE0_p1, sE1_p1, gw, gh);
+                    }
+                    else
+                    {
+                        AstcComputeWeightGrid1P(baseX, baseY, effMode, stageCcs, sE0_p0, sE1_p0, gw, gh);
+                        if (stage == 1u)
+                        {
+                            AstcComputePlane1WeightGrid(baseX, baseY, effMode, stageCcs, AstcGetChannel(sE0_p0, stageCcs), AstcGetChannel(sE1_p0, stageCcs), gw, gh);
+                        }
+                    }
                     cachedGW = gw;
                     cachedGH = gh;
                 }
-                AstcTryCandidate1PWithGrid(baseX, baseY, effMode, e0, e1, bm, gw, gh, wQ, epQ, best, bestChanErr);
-            }
-        }
 
-        // Unified Dual-Plane candidate search (Normal Map GGGR CCS=3, or Color/HDR dynamic CCS from bestChanErr)
-        {
-            uint bestCcs = 3u;
-            float4 dpE0 = e0;
-            float4 dpE1 = e1;
-            if (!isNormal)
-            {
-                bestCcs = 0u;
-                float maxChErr = bestChanErr.r;
-                if (bestChanErr.g > maxChErr) { maxChErr = bestChanErr.g; bestCcs = 1u; }
-                if (bestChanErr.b > maxChErr) { maxChErr = bestChanErr.b; bestCcs = 2u; }
-                if (hasAlpha && bestChanErr.a > maxChErr) { bestCcs = 3u; }
-                AstcFitSubsetEndpoints(baseX, baseY, effMode, bestCcs, 0u, 2u, 1u, dpE0, dpE1);
-            }
-
-#if BLOCK_X >= 5
-            uint dpCount = isNormal ? 4u : 3u;
-#else
-            uint dpCount = 2u;
-#endif
-            uint dpCachedG = 0u;
-            [loop] for (uint di = 0u; di < dpCount; ++di)
-            {
-                uint4 cfg;
-                if (isNormal)
-                {
-                    cfg = (di == 0u) ? uint4(0x452u, 4u, ASTC_QUANT_5, ASTC_QUANT_256)
-                        : (di == 1u) ? uint4(0x442u, 4u, ASTC_QUANT_4, ASTC_QUANT_256)
-                        : (di == 2u) ? uint4(0x4F1u, 5u, ASTC_QUANT_3, ASTC_QUANT_128)
-                                     : uint4(0x4E1u, 5u, ASTC_QUANT_2, ASTC_QUANT_256);
-                }
-                else if (!hasAlpha)
-                {
-                    cfg = (di == 0u) ? uint4(0x451u, 4u, ASTC_QUANT_3, ASTC_QUANT_256)
-                        : (di == 1u) ? uint4(0x442u, 4u, ASTC_QUANT_4, ASTC_QUANT_160)
-                                     : uint4(0x4E1u, 5u, ASTC_QUANT_2, ASTC_QUANT_256);
-                }
-                else
-                {
-                    cfg = (di == 0u) ? uint4(0x451u, 4u, ASTC_QUANT_3, ASTC_QUANT_128)
-                        : (di == 1u) ? uint4(0x442u, 4u, ASTC_QUANT_4, ASTC_QUANT_48)
-                                     : uint4(0x4E1u, 5u, ASTC_QUANT_2, ASTC_QUANT_160);
-                }
-                if (cfg.y != dpCachedG)
-                {
-                    AstcComputeWeightGrid1P(baseX, baseY, effMode, bestCcs, dpE0, dpE1, cfg.y, cfg.y);
-                    AstcComputePlane1WeightGrid(baseX, baseY, effMode, bestCcs, AstcGetChannel(dpE0, bestCcs), AstcGetChannel(dpE1, bestCcs), cfg.y, cfg.y);
-                    dpCachedG = cfg.y;
-                }
-                AstcTryCandidateDualPlaneWithGrid(baseX, baseY, effMode, bestCcs, dpE0, dpE1, cfg.x, cfg.y, cfg.y, cfg.z, cfg.w, best);
-            }
-        }
-
-        // ------------------------------------------------------------------------
-        // Step 7: High Quality Path (Quality >= 2) - Merged 2-Partition Directional Search
-        // ------------------------------------------------------------------------
-        if (!isNormal && _AstcQuality >= 2u)
-        {
-            bool smallBlock = (BLOCK_X * BLOCK_Y) < 32u;
-            uint bestSeed = AstcSelectBestSeed2P(baseX, baseY, effMode);
-            AstcPart2Params p2Params = AstcPreparePartition2(bestSeed, smallBlock);
-            float4 e0_p0, e1_p0, e0_p1, e1_p1;
-            AstcFitBothPartitions2P(baseX, baseY, effMode, p2Params, e0_p0, e1_p0, e0_p1, e1_p1);
-
-#if BLOCK_X >= 5
-            uint p2Count = 4u;
-#else
-            uint p2Count = 2u;
-#endif
-            uint p2CachedG = 0u;
-            [loop] for (uint p2 = 0u; p2 < p2Count; ++p2)
-            {
-                uint4 cfg;
-                if (!hasAlpha)
-                {
-                    if (p2 == 0u)      cfg = uint4(0x042u, 4u, ASTC_QUANT_4, ASTC_QUANT_40);
-                    else if (p2 == 1u) cfg = uint4(0x043u, 4u, ASTC_QUANT_6, ASTC_QUANT_24);
-                    else if (p2 == 2u) cfg = uint4(0x0F1u, 5u, ASTC_QUANT_3, ASTC_QUANT_24);
-                    else               cfg = uint4(0x0E2u, 5u, ASTC_QUANT_4, ASTC_QUANT_16);
-                }
-                else
-                {
-                    if (p2 == 0u)      cfg = uint4(0x051u, 4u, ASTC_QUANT_3, ASTC_QUANT_20);
-                    else if (p2 == 1u) cfg = uint4(0x042u, 4u, ASTC_QUANT_4, ASTC_QUANT_16);
-                    else if (p2 == 2u) cfg = uint4(0x0E1u, 5u, ASTC_QUANT_2, ASTC_QUANT_24);
-                    else               cfg = uint4(0x0F1u, 5u, ASTC_QUANT_3, ASTC_QUANT_12);
-                }
-                if (cfg.y != p2CachedG)
-                {
-                    AstcComputeWeightGrid2P(baseX, baseY, effMode, bestSeed, e0_p0, e1_p0, e0_p1, e1_p1, cfg.y, cfg.y);
-                    p2CachedG = cfg.y;
-                }
-                AstcTryCandidate2PWithGrid(baseX, baseY, effMode, bestSeed, p2Params, e0_p0, e1_p0, e0_p1, e1_p1, cfg.x, cfg.y, cfg.y, cfg.z, cfg.w, best);
+                AstcTryCandidate(baseX, baseY, effMode, stage, stageCcs, stageSeed, p2Params, sE0_p0, sE1_p0, sE0_p1, sE1_p1, bm, gw, gh, wQ, epQ, best, bestChanErr);
             }
         }
     }
