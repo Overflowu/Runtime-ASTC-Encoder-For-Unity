@@ -368,8 +368,11 @@ uint4 AstcReverse128(uint4 v)
     return uint4(reversebits(v.w), reversebits(v.z), reversebits(v.y), reversebits(v.x));
 }
 
-// Encodes up to 64 BISE symbols into a 128-bit block starting at startBit.
-void AstcEncodeBise64(inout uint4 dst, uint startBit, uint q, uint count, uint vals[64])
+// Shared per-thread BISE symbol scratch buffer (eliminates array-by-value copies in FXC/HLSLcc/DXC).
+static uint g_AstcBiseVals[64];
+
+// Encodes up to 64 BISE symbols from g_AstcBiseVals[0..count-1] into a 128-bit block starting at startBit.
+void AstcEncodeBise(inout uint4 dst, uint startBit, uint q, uint count)
 {
     uint rangeVal, b, t, qu;
     AstcGetQuantParams(q, rangeVal, b, t, qu);
@@ -379,7 +382,7 @@ void AstcEncodeBise64(inout uint4 dst, uint startBit, uint q, uint count, uint v
     {
         [loop] for (uint i = 0u; i < count; ++i)
         {
-            AstcWriteBits128(dst, bitPos, b, vals[i]);
+            AstcWriteBits128(dst, bitPos, b, g_AstcBiseVals[i]);
             bitPos += b;
         }
     }
@@ -388,11 +391,11 @@ void AstcEncodeBise64(inout uint4 dst, uint startBit, uint q, uint count, uint v
         uint lowMask = (b > 0u) ? ((1u << b) - 1u) : 0u;
         [loop] for (uint i = 0u; i < count; i += 5u)
         {
-            uint v0 = vals[i];
-            uint v1 = (i + 1u < count) ? vals[i + 1u] : 0u;
-            uint v2 = (i + 2u < count) ? vals[i + 2u] : 0u;
-            uint v3 = (i + 3u < count) ? vals[i + 3u] : 0u;
-            uint v4 = (i + 4u < count) ? vals[i + 4u] : 0u;
+            uint v0 = g_AstcBiseVals[i];
+            uint v1 = (i + 1u < count) ? g_AstcBiseVals[i + 1u] : 0u;
+            uint v2 = (i + 2u < count) ? g_AstcBiseVals[i + 2u] : 0u;
+            uint v3 = (i + 3u < count) ? g_AstcBiseVals[i + 3u] : 0u;
+            uint v4 = (i + 4u < count) ? g_AstcBiseVals[i + 4u] : 0u;
 
             uint T = AstcPack5Trits(v0 >> b, v1 >> b, v2 >> b, v3 >> b, v4 >> b);
 
@@ -426,90 +429,9 @@ void AstcEncodeBise64(inout uint4 dst, uint startBit, uint q, uint count, uint v
         uint lowMask = (b > 0u) ? ((1u << b) - 1u) : 0u;
         [loop] for (uint i = 0u; i < count; i += 3u)
         {
-            uint v0 = vals[i];
-            uint v1 = (i + 1u < count) ? vals[i + 1u] : 0u;
-            uint v2 = (i + 2u < count) ? vals[i + 2u] : 0u;
-
-            uint Q = AstcPack3Quints(v0 >> b, v1 >> b, v2 >> b);
-
-            AstcWriteBits128(dst, bitPos, b, v0 & lowMask); bitPos += b;
-            AstcWriteBits128(dst, bitPos, 3u, Q & 7u);       bitPos += 3u;
-
-            if (i + 1u < count)
-            {
-                AstcWriteBits128(dst, bitPos, b, v1 & lowMask); bitPos += b;
-                AstcWriteBits128(dst, bitPos, 2u, (Q >> 3u) & 3u); bitPos += 2u;
-            }
-            if (i + 2u < count)
-            {
-                AstcWriteBits128(dst, bitPos, b, v2 & lowMask); bitPos += b;
-                AstcWriteBits128(dst, bitPos, 2u, (Q >> 5u) & 3u); bitPos += 2u;
-            }
-        }
-    }
-}
-
-// Encodes up to 16 endpoint BISE symbols into a 128-bit block starting at startBit.
-void AstcEncodeBise16(inout uint4 dst, uint startBit, uint q, uint count, uint vals[16])
-{
-    uint rangeVal, b, t, qu;
-    AstcGetQuantParams(q, rangeVal, b, t, qu);
-    uint bitPos = startBit;
-
-    if (t == 0u && qu == 0u)
-    {
-        [loop] for (uint i = 0u; i < count; ++i)
-        {
-            AstcWriteBits128(dst, bitPos, b, vals[i]);
-            bitPos += b;
-        }
-    }
-    else if (t != 0u)
-    {
-        uint lowMask = (b > 0u) ? ((1u << b) - 1u) : 0u;
-        [loop] for (uint i = 0u; i < count; i += 5u)
-        {
-            uint v0 = vals[i];
-            uint v1 = (i + 1u < count) ? vals[i + 1u] : 0u;
-            uint v2 = (i + 2u < count) ? vals[i + 2u] : 0u;
-            uint v3 = (i + 3u < count) ? vals[i + 3u] : 0u;
-            uint v4 = (i + 4u < count) ? vals[i + 4u] : 0u;
-
-            uint T = AstcPack5Trits(v0 >> b, v1 >> b, v2 >> b, v3 >> b, v4 >> b);
-
-            AstcWriteBits128(dst, bitPos, b, v0 & lowMask); bitPos += b;
-            AstcWriteBits128(dst, bitPos, 2u, T & 3u);       bitPos += 2u;
-
-            if (i + 1u < count)
-            {
-                AstcWriteBits128(dst, bitPos, b, v1 & lowMask); bitPos += b;
-                AstcWriteBits128(dst, bitPos, 2u, (T >> 2u) & 3u); bitPos += 2u;
-            }
-            if (i + 2u < count)
-            {
-                AstcWriteBits128(dst, bitPos, b, v2 & lowMask); bitPos += b;
-                AstcWriteBits128(dst, bitPos, 1u, (T >> 4u) & 1u); bitPos += 1u;
-            }
-            if (i + 3u < count)
-            {
-                AstcWriteBits128(dst, bitPos, b, v3 & lowMask); bitPos += b;
-                AstcWriteBits128(dst, bitPos, 2u, (T >> 5u) & 3u); bitPos += 2u;
-            }
-            if (i + 4u < count)
-            {
-                AstcWriteBits128(dst, bitPos, b, v4 & lowMask); bitPos += b;
-                AstcWriteBits128(dst, bitPos, 1u, (T >> 7u) & 1u); bitPos += 1u;
-            }
-        }
-    }
-    else
-    {
-        uint lowMask = (b > 0u) ? ((1u << b) - 1u) : 0u;
-        [loop] for (uint i = 0u; i < count; i += 3u)
-        {
-            uint v0 = vals[i];
-            uint v1 = (i + 1u < count) ? vals[i + 1u] : 0u;
-            uint v2 = (i + 2u < count) ? vals[i + 2u] : 0u;
+            uint v0 = g_AstcBiseVals[i];
+            uint v1 = (i + 1u < count) ? g_AstcBiseVals[i + 1u] : 0u;
+            uint v2 = (i + 2u < count) ? g_AstcBiseVals[i + 2u] : 0u;
 
             uint Q = AstcPack3Quints(v0 >> b, v1 >> b, v2 >> b);
 

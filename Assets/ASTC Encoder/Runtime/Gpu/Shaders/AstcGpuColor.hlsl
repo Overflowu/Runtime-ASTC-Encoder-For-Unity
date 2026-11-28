@@ -95,16 +95,22 @@ uint AstcFloatToHalfU16(float x)
 // ASTC HDR Endpoint Quantization (CEM 11 / CEM 14 / CEM 15)
 // ============================================================================
 
+// Shared per-thread scratch arrays for HDR endpoint quantization (avoids per-call-site indexableTemp explosion in FXC).
+static uint g_AstcHdrCodes[6];
+static uint g_AstcHdrRawV[6];
+static uint g_AstcHdrCandCodes[6];
+static uint g_AstcHdrUqV[6];
+
 // Exact Khronos ASTC Spec CEM 11 (HDR RGB Direct) hardware unpacker.
-// Given 6 unquantized 8-bit endpoint values v[0..5], returns hardware-reconstructed LNS endpoints in [0, 65535].
-void AstcUnpackHdrRgb(uint v[6], out float3 outE0Lns, out float3 outE1Lns)
+// Reads 6 unquantized 8-bit endpoint values from g_AstcHdrUqV[0..5], returns hardware-reconstructed LNS endpoints in [0, 65535].
+void AstcUnpackHdrRgb(out float3 outE0Lns, out float3 outE1Lns)
 {
-    uint v0 = v[0];
-    uint v1 = v[1];
-    uint v2 = v[2];
-    uint v3 = v[3];
-    uint v4 = v[4];
-    uint v5 = v[5];
+    uint v0 = g_AstcHdrUqV[0];
+    uint v1 = g_AstcHdrUqV[1];
+    uint v2 = g_AstcHdrUqV[2];
+    uint v3 = g_AstcHdrUqV[3];
+    uint v4 = g_AstcHdrUqV[4];
+    uint v5 = g_AstcHdrUqV[5];
 
     uint majcomp = ((v4 & 0x80u) >> 7u) | (((v5 & 0x80u) >> 7u) << 1u);
     if (majcomp == 3u)
@@ -185,8 +191,8 @@ void AstcUnpackHdrRgb(uint v[6], out float3 outE0Lns, out float3 outE1Lns)
     outE1Lns = float3((float)(r1 << 4), (float)(g1 << 4), (float)(bl1 << 4));
 }
 
-// Packs CEM 11 delta mode fields into 6 8-bit endpoint values.
-void AstcPackHdrRgbDeltaMode(uint majcomp, uint modeval, uint a, uint b0, uint b1, uint c, uint d0, uint d1, out uint v[6])
+// Packs CEM 11 delta mode fields into 6 8-bit endpoint values in g_AstcHdrRawV[0..5].
+void AstcPackHdrRgbDeltaMode(uint majcomp, uint modeval, uint a, uint b0, uint b1, uint c, uint d0, uint d1)
 {
     uint v0 = a & 0xFFu;
     uint v1 = ((modeval & 1u) << 7u) | (((a >> 8u) & 1u) << 6u) | (c & 0x3Fu);
@@ -250,37 +256,37 @@ void AstcPackHdrRgbDeltaMode(uint majcomp, uint modeval, uint a, uint b0, uint b
     v4 |= (bit2 << 6u) | (bit4 << 5u);
     v5 |= (bit3 << 6u) | (bit5 << 5u);
 
-    v[0] = v0; v[1] = v1; v[2] = v2; v[3] = v3; v[4] = v4; v[5] = v5;
+    g_AstcHdrRawV[0] = v0; g_AstcHdrRawV[1] = v1; g_AstcHdrRawV[2] = v2;
+    g_AstcHdrRawV[3] = v3; g_AstcHdrRawV[4] = v4; g_AstcHdrRawV[5] = v5;
 }
 
-// Encodes HDR RGB endpoints e0, e1 (in LNS [0, 65535]) into 6 BISE endpoint codes
+// Encodes HDR RGB endpoints e0, e1 (in LNS [0, 65535]) into g_AstcHdrCodes[0..5]
 // using CEM_HDR_RGB_DIRECT (11): tries high-precision majcomp 0/1/2 delta modes (up to 12-bit)
 // and compares exact hardware-reconstructed LNS MSE against majcomp == 3 direct mode.
 void AstcQuantizeHdrRgbEndpoints(
     float3 e0Lns,
     float3 e1Lns,
     uint epQuant,
-    out uint codes[6],
     out float3 uq0Lns,
     out float3 uq1Lns)
 {
     // Baseline: majcomp == 3 direct mode (always valid)
-    uint baseVals[6];
-    baseVals[0] = (uint)clamp(floor(e0Lns.r / 256.0 + 0.5), 0.0, 255.0);
-    baseVals[1] = (uint)clamp(floor(e1Lns.r / 256.0 + 0.5), 0.0, 255.0);
-    baseVals[2] = (uint)clamp(floor(e0Lns.g / 256.0 + 0.5), 0.0, 255.0);
-    baseVals[3] = (uint)clamp(floor(e1Lns.g / 256.0 + 0.5), 0.0, 255.0);
-    baseVals[4] = 128u + (uint)clamp(floor(e0Lns.b / 512.0 + 0.5), 0.0, 127.0);
-    baseVals[5] = 128u + (uint)clamp(floor(e1Lns.b / 512.0 + 0.5), 0.0, 127.0);
+    g_AstcHdrRawV[0] = (uint)clamp(floor(e0Lns.r / 256.0 + 0.5), 0.0, 255.0);
+    g_AstcHdrRawV[1] = (uint)clamp(floor(e1Lns.r / 256.0 + 0.5), 0.0, 255.0);
+    g_AstcHdrRawV[2] = (uint)clamp(floor(e0Lns.g / 256.0 + 0.5), 0.0, 255.0);
+    g_AstcHdrRawV[3] = (uint)clamp(floor(e1Lns.g / 256.0 + 0.5), 0.0, 255.0);
+    g_AstcHdrRawV[4] = 128u + (uint)clamp(floor(e0Lns.b / 512.0 + 0.5), 0.0, 127.0);
+    g_AstcHdrRawV[5] = 128u + (uint)clamp(floor(e1Lns.b / 512.0 + 0.5), 0.0, 127.0);
 
-    uint baseUq[6];
     [loop] for (uint bi = 0u; bi < 6u; ++bi)
     {
-        codes[bi] = AstcQuantizeColorRange(baseVals[bi], epQuant, bi >= 4u, baseUq[bi]);
+        uint uqTmp;
+        g_AstcHdrCodes[bi] = AstcQuantizeColorRange(g_AstcHdrRawV[bi], epQuant, bi >= 4u, uqTmp);
+        g_AstcHdrUqV[bi] = uqTmp;
     }
 
-    uq0Lns = float3((float)(baseUq[0] << 8u), (float)(baseUq[2] << 8u), (float)((baseUq[4] & 0x7Fu) << 9u));
-    uq1Lns = float3((float)(baseUq[1] << 8u), (float)(baseUq[3] << 8u), (float)((baseUq[5] & 0x7Fu) << 9u));
+    uq0Lns = float3((float)(g_AstcHdrUqV[0] << 8u), (float)(g_AstcHdrUqV[2] << 8u), (float)((g_AstcHdrUqV[4] & 0x7Fu) << 9u));
+    uq1Lns = float3((float)(g_AstcHdrUqV[1] << 8u), (float)(g_AstcHdrUqV[3] << 8u), (float)((g_AstcHdrUqV[5] & 0x7Fu) << 9u));
 
     float3 d0 = uq0Lns - e0Lns;
     float3 d1 = uq1Lns - e1Lns;
@@ -353,24 +359,23 @@ void AstcQuantizeHdrRgbEndpoints(
             && d1S >= dMin && d1S <= dMax)
         {
             uint dMask = (1u << db) - 1u;
-            uint rawV[6];
-            AstcPackHdrRgbDeltaMode(majcomp, mv, (uint)aS, (uint)b0S, (uint)b1S, (uint)cS, ((uint)d0S) & dMask, ((uint)d1S) & dMask, rawV);
+            AstcPackHdrRgbDeltaMode(majcomp, mv, (uint)aS, (uint)b0S, (uint)b1S, (uint)cS, ((uint)d0S) & dMask, ((uint)d1S) & dMask);
 
-            uint candCodes[6];
-            uint uqV[6];
             [loop] for (uint ci = 0u; ci < 6u; ++ci)
             {
-                candCodes[ci] = AstcQuantizeColor(rawV[ci], epQuant, uqV[ci]);
+                uint uqTmp;
+                g_AstcHdrCandCodes[ci] = AstcQuantizeColor(g_AstcHdrRawV[ci], epQuant, uqTmp);
+                g_AstcHdrUqV[ci] = uqTmp;
             }
 
             float3 cand0, cand1;
-            AstcUnpackHdrRgb(uqV, cand0, cand1);
+            AstcUnpackHdrRgb(cand0, cand1);
             float3 cd0 = cand0 - e0Lns;
             float3 cd1 = cand1 - e1Lns;
             float candErr = dot(cd0, cd0) + dot(cd1, cd1);
             if (candErr < bestErr)
             {
-                [loop] for (uint cj = 0u; cj < 6u; ++cj) codes[cj] = candCodes[cj];
+                [loop] for (uint cj = 0u; cj < 6u; ++cj) g_AstcHdrCodes[cj] = g_AstcHdrCandCodes[cj];
                 uq0Lns = cand0;
                 uq1Lns = cand1;
             }
