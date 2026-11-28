@@ -353,7 +353,10 @@ jobs:
           emar rcs build-webgl-simd-obj/libastcenc-wasm-simd.a build-webgl-simd-obj/*.o
           llvm-nm --defined-only build-webgl-obj/libastcenc-wasm.a | grep "astcenc_config_init"
           llvm-nm --defined-only build-webgl-simd-obj/libastcenc-wasm-simd.a | grep "astcenc_compress_image"
+          em++ -O2 -std=c++14 -c "Assets/ASTC Encoder Web/Plugins/WebGL/astcenc_wasm_mt.cpp" -Ibuild-webgl-src -o build-webgl-obj/astcenc_wasm_mt.o
+          em++ -O2 -std=c++14 -pthread -c "Assets/ASTC Encoder Web/Plugins/WebGL/astcenc_wasm_mt.cpp" -Ibuild-webgl-src -o build-webgl-simd-obj/astcenc_wasm_mt_pthread.o
           ./.github/scripts/build-webgl-worker.sh build-webgl-worker
+          node .github/scripts/test-webgl-worker.mjs build-webgl-worker
 
       - name: Upload WebGL Web Worker artifact
         uses: actions/upload-artifact@v7

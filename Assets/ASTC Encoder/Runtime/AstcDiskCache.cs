@@ -10,21 +10,35 @@ namespace Aperture.Astcenc.Runtime
     /// <summary>
     /// Persistent on-disk ASTC texture cache backed by standard KTX v1 files (with full mipmap chains).
     /// Enables "compress once, load instantly on subsequent launches" workflows for downloaded or procedural textures.
+    /// On WebGL, automatically persists writes to IndexedDB via IDBFS (or MiniGame FileSystemManager on Tuanjie MiniGames).
     /// </summary>
     public static class AstcDiskCache
     {
+        /// <summary>
+        /// Recommended default cache directory for the current platform
+        /// (<c>Application.persistentDataPath/AstcCache</c> on native/WebGL, or <c>USER_DATA_PATH/astc-cache</c> on MiniGames).
+        /// </summary>
+        public static string DefaultCacheDirectory => AstcExtensionHooks.CacheStorage.DefaultRoot;
+
+        /// <summary>
+        /// Flushes any pending asynchronous filesystem writes to persistent browser storage (IDBFS <c>FS.syncfs</c> on WebGL).
+        /// No-op on native platforms and MiniGames where writes are already flushed.
+        /// </summary>
+        public static Task FlushAsync() => AstcExtensionHooks.CacheStorage.FlushAsync();
+
         /// <summary>
         /// Attempts to load a cached KTX v1 ASTC texture from <paramref name="cachePath"/>.
         /// Returns null if the file does not exist or is corrupted.
         /// </summary>
         public static Texture2D TryLoad(string cachePath, bool makeNoLongerReadable = true, string textureName = null)
         {
-            if (string.IsNullOrEmpty(cachePath) || !File.Exists(cachePath))
+            IAstcCacheStorage storage = AstcExtensionHooks.CacheStorage;
+            if (!storage.Exists(cachePath))
                 return null;
 
             try
             {
-                byte[] bytes = File.ReadAllBytes(cachePath);
+                byte[] bytes = storage.ReadAllBytes(cachePath);
                 return AstcKtxContainer.LoadTexture(bytes, makeNoLongerReadable, textureName);
             }
             catch (Exception ex)
@@ -39,17 +53,14 @@ namespace Aperture.Astcenc.Runtime
         /// </summary>
         public static async Task<Texture2D> TryLoadAsync(string cachePath, bool makeNoLongerReadable = true, string textureName = null, CancellationToken cancellationToken = default)
         {
-            if (string.IsNullOrEmpty(cachePath) || !File.Exists(cachePath))
+            IAstcCacheStorage storage = AstcExtensionHooks.CacheStorage;
+            if (!storage.Exists(cachePath))
                 return null;
 
             try
             {
                 cancellationToken.ThrowIfCancellationRequested();
-#if UNITY_WEBGL && !UNITY_EDITOR
-                byte[] bytes = File.ReadAllBytes(cachePath);
-#else
-                byte[] bytes = await Task.Run(() => File.ReadAllBytes(cachePath), cancellationToken);
-#endif
+                byte[] bytes = await storage.ReadAllBytesAsync(cachePath, cancellationToken);
                 cancellationToken.ThrowIfCancellationRequested();
                 return AstcKtxContainer.LoadTexture(bytes, makeNoLongerReadable, textureName);
             }
@@ -95,7 +106,7 @@ namespace Aperture.Astcenc.Runtime
 
             if (!string.IsNullOrEmpty(cachePath))
             {
-                await WriteFileAtomicAsync(cachePath, ktxBytes, cancellationToken);
+                await AstcExtensionHooks.CacheStorage.WriteAtomicAsync(cachePath, ktxBytes, cancellationToken);
             }
 
             cancellationToken.ThrowIfCancellationRequested();
@@ -154,67 +165,6 @@ namespace Aperture.Astcenc.Runtime
                 {
                     UnityEngine.Object.Destroy(source);
                 }
-            }
-        }
-
-        private static Task WriteFileAtomicAsync(string path, byte[] data, CancellationToken cancellationToken)
-        {
-#if UNITY_WEBGL && !UNITY_EDITOR
-            try
-            {
-                WriteFileAtomic(path, data, cancellationToken);
-                return Task.CompletedTask;
-            }
-            catch (OperationCanceledException)
-            {
-                return Task.FromCanceled(cancellationToken.IsCancellationRequested ? cancellationToken : new CancellationToken(true));
-            }
-            catch (Exception ex)
-            {
-                return Task.FromException(ex);
-            }
-#else
-            return Task.Run(() => WriteFileAtomic(path, data, cancellationToken), cancellationToken);
-#endif
-        }
-
-        private static void WriteFileAtomic(string path, byte[] data, CancellationToken cancellationToken)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            string dir = Path.GetDirectoryName(path);
-            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
-            {
-                Directory.CreateDirectory(dir);
-            }
-
-            string tempPath = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-            try
-            {
-                File.WriteAllBytes(tempPath, data);
-                if (File.Exists(path))
-                {
-                    File.Replace(tempPath, path, null);
-                }
-                else
-                {
-                    try
-                    {
-                        File.Move(tempPath, path);
-                    }
-                    catch (IOException) when (File.Exists(path))
-                    {
-                        // Another concurrent writer created the cache file first; replace atomically.
-                        File.Replace(tempPath, path, null);
-                    }
-                }
-            }
-            catch
-            {
-                if (File.Exists(tempPath))
-                {
-                    try { File.Delete(tempPath); } catch { }
-                }
-                throw;
             }
         }
     }

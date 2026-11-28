@@ -1,0 +1,20 @@
+{
+    "name": "Aperture.Astcenc.Web.Editor",
+    "rootNamespace": "Aperture.Astcenc.Web.Editor",
+    "references": [
+        "Aperture.Astcenc.Runtime",
+        "Aperture.Astcenc.Editor",
+        "Aperture.Astcenc.Web.Runtime"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

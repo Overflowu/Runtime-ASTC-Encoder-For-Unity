@@ -296,15 +296,17 @@ namespace Aperture.Astcenc.Runtime
         private sealed class CompactTextureSnapshot : IDisposable
         {
             public IntPtr Buffer;
+            public int ByteLength;
             public GraphicsFormat Format;
             public int Width;
             public int Height;
             public int MipCount;
+            public bool OwnsBuffer = true;
 
             public void Dispose()
             {
                 IntPtr ptr = Interlocked.Exchange(ref Buffer, IntPtr.Zero);
-                if (ptr != IntPtr.Zero)
+                if (OwnsBuffer && ptr != IntPtr.Zero)
                 {
                     Marshal.FreeHGlobal(ptr);
                 }
@@ -382,6 +384,7 @@ namespace Aperture.Astcenc.Runtime
                 return new CompactTextureSnapshot
                 {
                     Buffer = buffer,
+                    ByteLength = (int)totalBytes,
                     Format = format,
                     Width = width,
                     Height = height,
@@ -831,22 +834,6 @@ namespace Aperture.Astcenc.Runtime
                 return Task.FromResult<AstcRaw>(null);
             }
 
-#if UNITY_WEBGL && !UNITY_EDITOR
-            if (AstcWebWorkerBackend.IsReady)
-            {
-                return AstcWebWorkerBackend.CompressTextureAsync(
-                    inputTexture,
-                    textureType,
-                    blockSize,
-                    quality,
-                    includeMipmaps,
-                    useAlphaWeight,
-                    usePerceptual,
-                    alphaScaleRadius,
-                    cancellationToken);
-            }
-#endif
-
             GraphicsFormat graphicsFormat = inputTexture.graphicsFormat;
             astcenc_swizzle swizzle = GetSwizzle(graphicsFormat, textureType);
             int mipCount = includeMipmaps ? inputTexture.mipmapCount : 1;
@@ -867,6 +854,20 @@ namespace Aperture.Astcenc.Runtime
                 return Task.FromResult<AstcRaw>(null);
             }
 
+#if UNITY_WEBGL && !UNITY_EDITOR
+            return RunWebAsyncWithFallback(
+                snapshot,
+                graphicsFormat,
+                textureType,
+                blockSize,
+                quality,
+                threadCount,
+                useAlphaWeight,
+                usePerceptual,
+                alphaScaleRadius,
+                swizzle,
+                cancellationToken);
+#else
             return RunCpuTask(() =>
             {
                 using (snapshot)
@@ -889,7 +890,63 @@ namespace Aperture.Astcenc.Runtime
                     return CompressCompactSnapshot(lease.Context, swizzle, snapshot, cancellationToken);
                 }
             }, cancellationToken);
+#endif
         }
+
+#if UNITY_WEBGL && !UNITY_EDITOR
+        private static async Task<AstcRaw> RunWebAsyncWithFallback(
+            CompactTextureSnapshot snapshot,
+            GraphicsFormat graphicsFormat,
+            TextureType textureType,
+            BlockSize blockSize,
+            CompressQuality quality,
+            int threadCount,
+            bool useAlphaWeight,
+            bool usePerceptual,
+            uint alphaScaleRadius,
+            astcenc_swizzle swizzle,
+            CancellationToken cancellationToken)
+        {
+            using (snapshot)
+            {
+                AstcRaw offloaded = AstcExtensionHooks.WebExecutor != null
+                    ? await AstcExtensionHooks.WebExecutor.CompressPixelsAsync(
+                        snapshot.Buffer,
+                        snapshot.ByteLength,
+                        snapshot.Width,
+                        snapshot.Height,
+                        snapshot.MipCount,
+                        graphicsFormat,
+                        textureType,
+                        blockSize,
+                        quality,
+                        threadCount,
+                        useAlphaWeight,
+                        usePerceptual,
+                        alphaScaleRadius,
+                        cancellationToken)
+                    : null;
+
+                if (offloaded != null)
+                    return offloaded;
+
+                cancellationToken.ThrowIfCancellationRequested();
+                using AstcContextPool.CompressorLease lease = AstcContextPool.RentCompressor(
+                    graphicsFormat,
+                    textureType,
+                    blockSize,
+                    quality,
+                    threadCount,
+                    useAlphaWeight,
+                    usePerceptual,
+                    alphaScaleRadius);
+                if (lease.Context == null)
+                    return null;
+
+                return CompressCompactSnapshot(lease.Context, swizzle, snapshot, cancellationToken);
+            }
+        }
+#endif
 
         internal static Texture2D CompressToTexture(
             Texture2D inputTexture,
@@ -1196,6 +1253,107 @@ namespace Aperture.Astcenc.Runtime
             }
         }
 
+        internal static unsafe Task<byte[]> DecompressToBytesAsync(
+            byte[] compressedBytes,
+            int offset,
+            int length,
+            int width,
+            int height,
+            BlockSize blockSize,
+            bool srgb,
+            bool isHdr,
+            int outputBitness,
+            int threadCount,
+            CancellationToken cancellationToken)
+        {
+            if (cancellationToken.IsCancellationRequested)
+                return Task.FromCanceled<byte[]>(cancellationToken);
+
+            if (!IsSupported)
+            {
+                Debug.LogError("Native CPU ASTC library is not available on this platform.");
+                return Task.FromResult<byte[]>(null);
+            }
+
+            if (compressedBytes == null || offset < 0 || length <= 0 || offset + length > compressedBytes.Length)
+            {
+                Debug.LogError("Invalid compressed byte array range.");
+                return Task.FromResult<byte[]>(null);
+            }
+
+            // Copy caller slice so caller may reuse/mutate array safely during async execution.
+            byte[] inputCopy = new byte[length];
+            Buffer.BlockCopy(compressedBytes, offset, inputCopy, 0, length);
+
+#if UNITY_WEBGL && !UNITY_EDITOR
+            return DecompressWebAsyncWithFallback(
+                inputCopy, width, height, blockSize, srgb, isHdr, outputBitness, threadCount, cancellationToken);
+#else
+            return Task.Run(() =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return DecompressToBytes(inputCopy, 0, inputCopy.Length, width, height, blockSize, srgb, isHdr, outputBitness, threadCount);
+            }, cancellationToken);
+#endif
+        }
+
+        internal static unsafe Task<byte[]> DecompressToBytesAsync(
+            IntPtr compressedData,
+            int compressedLength,
+            int width,
+            int height,
+            BlockSize blockSize,
+            bool srgb,
+            bool isHdr,
+            int outputBitness,
+            int threadCount,
+            CancellationToken cancellationToken)
+        {
+            if (cancellationToken.IsCancellationRequested)
+                return Task.FromCanceled<byte[]>(cancellationToken);
+
+            if (!IsSupported || compressedData == IntPtr.Zero || compressedLength <= 0)
+                return Task.FromResult<byte[]>(null);
+
+            byte[] inputCopy = new byte[compressedLength];
+            Marshal.Copy(compressedData, inputCopy, 0, compressedLength);
+
+            return DecompressToBytesAsync(inputCopy, 0, inputCopy.Length, width, height, blockSize, srgb, isHdr, outputBitness, threadCount, cancellationToken);
+        }
+
+#if UNITY_WEBGL && !UNITY_EDITOR
+        private static async Task<byte[]> DecompressWebAsyncWithFallback(
+            byte[] inputCopy,
+            int width,
+            int height,
+            BlockSize blockSize,
+            bool srgb,
+            bool isHdr,
+            int outputBitness,
+            int threadCount,
+            CancellationToken cancellationToken)
+        {
+            IntPtr pinnedCopy = Marshal.AllocHGlobal(inputCopy.Length);
+            try
+            {
+                Marshal.Copy(inputCopy, 0, pinnedCopy, inputCopy.Length);
+                byte[] offloaded = AstcExtensionHooks.WebExecutor != null
+                    ? await AstcExtensionHooks.WebExecutor.DecompressAsync(
+                        pinnedCopy, inputCopy.Length, width, height, blockSize, srgb, isHdr, outputBitness, threadCount, cancellationToken)
+                    : null;
+                if (offloaded != null)
+                    return offloaded;
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(pinnedCopy);
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            return DecompressToBytes(inputCopy, 0, inputCopy.Length, width, height, blockSize, srgb, isHdr, outputBitness, threadCount);
+        }
+#endif
+
         internal static Texture2D DecompressToTexture(
             IntPtr compressedData,
             int compressedLength,
@@ -1364,25 +1522,6 @@ namespace Aperture.Astcenc.Runtime
                 return Task.FromResult<AstcRaw>(null);
             }
 
-#if UNITY_WEBGL && !UNITY_EDITOR
-            if (AstcWebWorkerBackend.IsReady)
-            {
-                return AstcWebWorkerBackend.CompressRawPixelsAsync(
-                    pixelPtr,
-                    pixelByteLength,
-                    width,
-                    height,
-                    sourceFormat,
-                    textureType,
-                    blockSize,
-                    quality,
-                    useAlphaWeight,
-                    usePerceptual,
-                    alphaScaleRadius,
-                    cancellationToken);
-            }
-#endif
-
             // Copy caller-owned pixels once so the background task is safe even if the caller frees/reuses its buffer.
             IntPtr copy = Marshal.AllocHGlobal((int)requiredBytes);
             try
@@ -1398,12 +1537,27 @@ namespace Aperture.Astcenc.Runtime
             var snapshot = new CompactTextureSnapshot
             {
                 Buffer = copy,
+                ByteLength = (int)requiredBytes,
                 Format = sourceFormat,
                 Width = width,
                 Height = height,
                 MipCount = 1,
             };
 
+#if UNITY_WEBGL && !UNITY_EDITOR
+            return RunWebAsyncWithFallback(
+                snapshot,
+                sourceFormat,
+                textureType,
+                blockSize,
+                quality,
+                threadCount,
+                useAlphaWeight,
+                usePerceptual,
+                alphaScaleRadius,
+                GetSwizzle(sourceFormat, textureType),
+                cancellationToken);
+#else
             return RunCpuTask(() =>
             {
                 using (snapshot)
@@ -1416,6 +1570,107 @@ namespace Aperture.Astcenc.Runtime
                     return CompressCompactSnapshot(lease.Context, swizzle, snapshot, cancellationToken);
                 }
             }, cancellationToken);
+#endif
+        }
+
+        internal static AstcRaw CompressSnapshotSync(
+            IntPtr buffer,
+            int byteLength,
+            int width,
+            int height,
+            int mipCount,
+            GraphicsFormat format,
+            TextureType textureType,
+            BlockSize blockSize,
+            CompressQuality quality,
+            int threadCount,
+            bool useAlphaWeight,
+            bool usePerceptual,
+            uint alphaScaleRadius,
+            bool useUnityJobSystem)
+        {
+            if (!IsSupported || buffer == IntPtr.Zero || width <= 0 || height <= 0 || mipCount <= 0)
+                return null;
+
+            using AstcContextPool.CompressorLease lease = AstcContextPool.RentCompressor(
+                format, textureType, blockSize, quality, threadCount, useAlphaWeight, usePerceptual, alphaScaleRadius, useUnityJobSystem);
+            if (lease.Context == null)
+                return null;
+
+            var snapshot = new CompactTextureSnapshot
+            {
+                Buffer = buffer,
+                Format = format,
+                Width = width,
+                Height = height,
+                MipCount = mipCount,
+                OwnsBuffer = false,
+            };
+            astcenc_swizzle swizzle = GetSwizzle(format, textureType);
+            return CompressCompactSnapshot(lease.Context, swizzle, snapshot, CancellationToken.None);
+        }
+
+        internal static Task<AstcRaw> CompressSnapshotAsync(
+            IntPtr buffer,
+            int byteLength,
+            int width,
+            int height,
+            int mipCount,
+            GraphicsFormat format,
+            TextureType textureType,
+            BlockSize blockSize,
+            CompressQuality quality,
+            int threadCount,
+            bool useAlphaWeight,
+            bool usePerceptual,
+            uint alphaScaleRadius,
+            CancellationToken cancellationToken)
+        {
+            if (cancellationToken.IsCancellationRequested)
+                return Task.FromCanceled<AstcRaw>(cancellationToken);
+
+            if (!IsSupported || buffer == IntPtr.Zero || width <= 0 || height <= 0 || mipCount <= 0)
+                return Task.FromResult<AstcRaw>(null);
+
+            var snapshot = new CompactTextureSnapshot
+            {
+                Buffer = buffer,
+                ByteLength = byteLength,
+                Format = format,
+                Width = width,
+                Height = height,
+                MipCount = mipCount,
+                OwnsBuffer = false,
+            };
+
+#if UNITY_WEBGL && !UNITY_EDITOR
+            return RunWebAsyncWithFallback(
+                snapshot,
+                format,
+                textureType,
+                blockSize,
+                quality,
+                threadCount,
+                useAlphaWeight,
+                usePerceptual,
+                alphaScaleRadius,
+                GetSwizzle(format, textureType),
+                cancellationToken);
+#else
+            return RunCpuTask(() =>
+            {
+                using (snapshot)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    using AstcContextPool.CompressorLease lease = AstcContextPool.RentCompressor(
+                        format, textureType, blockSize, quality, threadCount, useAlphaWeight, usePerceptual, alphaScaleRadius);
+                    if (lease.Context == null)
+                        return null;
+                    astcenc_swizzle swizzle = GetSwizzle(format, textureType);
+                    return CompressCompactSnapshot(lease.Context, swizzle, snapshot, cancellationToken);
+                }
+            }, cancellationToken);
+#endif
         }
 
         internal static unsafe bool CompressRawPixelsInto(

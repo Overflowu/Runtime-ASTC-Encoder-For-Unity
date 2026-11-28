@@ -42,7 +42,8 @@ All compression methods accept `EncodeBackend` (default `EncodeBackend.Auto`: pr
 | :--- | :--- |
 | `Texture2D.LoadRawTextureData(AstcRaw raw)` | Uploads unmanaged `AstcRaw` directly into a `Texture2D` without managed copies |
 | `Encoder.LoadFromKTX(byte[] ktxData, ...)` | Parses a KTX v1 container and creates an ASTC `Texture2D` (automatically falls back to CPU software decompression on non-ASTC devices) |
-| `Encoder.Decompress(...)` / `DecompressToTexture(...)` / `DecompressAstcFile(...)` | CPU software decompression of raw ASTC blocks or `.astc` file bytes via native `astc-encoder` |
+| `Encoder.Decompress(...)` / `DecompressAsync(...)` / `DecompressToTexture(Async)` / `DecompressAstcFile(Async)` | CPU software decompression of raw ASTC blocks or `.astc` file bytes via native `astc-encoder` (async variants use background threads on native, or pthreads/Web Workers on WebGL) |
+| `Encoder.WebWorkerCount` / `InitializeWebWorkerAsync(...)` / `ShutdownWebWorker()` | Inspect or manage the WebGL Web Worker pool (auto-initialized by default when bundled) |
 
 ---
 
@@ -57,7 +58,7 @@ Frame-budgeted scheduler for runtime streaming and UGC pipelines:
 
 ### `AstcKtxContainer` & `AstcDiskCache`
 - **`AstcKtxContainer`**: Reads and writes standard KTX v1 files (`Encode`, `TryDecode`, `LoadTexture`) with full mipmap chains and color-space/HDR metadata.
-- **`AstcDiskCache`** (`static class`): Persistent on-disk KTX v1 cache (`TryLoad`, `TryLoadAsync`, `CompressAndSaveAsync`, `LoadOrCompressAsync`) using atomic `File.Replace` writes and zero-copy `AstcRaw` uploads.
+- **`AstcDiskCache`** (`static class`): Persistent on-disk KTX v1 cache (`TryLoad`, `TryLoadAsync`, `CompressAndSaveAsync`, `LoadOrCompressAsync`, `DefaultCacheDirectory`, `FlushAsync`) using atomic `File.Replace` writes, debounced `FS.syncfs` on WebGL IDBFS, and `FileSystemManager` on Tuanjie MiniGames.
 
 ---
 

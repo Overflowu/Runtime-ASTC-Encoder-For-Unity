@@ -1,5 +1,6 @@
-// Unity WebGL JavaScript library bridging C# AstcWebWorkerBackend to a pool of dedicated Web Workers.
-// Works across Unity 2021.3 (Emscripten 2.0), Unity 2022.3 (Emscripten 3.1), and Unity 6 without SharedArrayBuffer.
+// Unity WebGL & Tuanjie MiniGame JavaScript library bridging C# AstcWebWorkerBackend
+// to a pool of dedicated Web Workers (or wx/tt/ks MiniGame Workers).
+// Works across Unity 2021.3, 2022.3, Unity 6, and Tuanjie without SharedArrayBuffer.
 
 var AstcWebWorkerPlugin = {
   $AstcWorkerState: {
@@ -13,6 +14,14 @@ var AstcWebWorkerPlugin = {
     initialized: false,
     readySent: false,
     simdEnabled: false,
+    isMiniGame: false,
+
+    getMiniGameHost: function () {
+      if (typeof wx !== 'undefined' && wx && typeof wx.createWorker === 'function') return wx;
+      if (typeof tt !== 'undefined' && tt && typeof tt.createWorker === 'function') return tt;
+      if (typeof ks !== 'undefined' && ks && typeof ks.createWorker === 'function') return ks;
+      return null;
+    },
 
     invokeCallback: function (cbPtr, sig, args) {
       if (!cbPtr) return;
@@ -35,13 +44,18 @@ var AstcWebWorkerPlugin = {
         }
         var worker = st.idleWorkers.pop();
         st.inFlight[job.jobId] = worker;
-        worker.postMessage(job.message, [job.message.rgbaBuffer]);
+        if (st.isMiniGame) {
+          worker.postMessage(job.message);
+        } else {
+          var transfer = job.transferBuffer ? [job.transferBuffer] : [];
+          worker.postMessage(job.message, transfer);
+        }
       }
     },
 
     handleWorkerMessage: function (worker, event) {
       var st = AstcWorkerState;
-      var msg = event.data;
+      var msg = (event && event.data !== undefined) ? event.data : event;
       if (!msg || typeof msg !== 'object') return;
 
       if (msg.type === 'ready') {
@@ -55,7 +69,6 @@ var AstcWebWorkerPlugin = {
           }
           st.dispatchNext();
         } else {
-          // Remove failed worker; if no workers remain and ready wasn't sent, report failure.
           var idx = st.workers.indexOf(worker);
           if (idx >= 0) st.workers.splice(idx, 1);
           try { worker.terminate(); } catch (_) {}
@@ -106,17 +119,23 @@ var AstcWebWorkerPlugin = {
   },
 
   AstcWebWorker_IsSupported: function () {
+    var st = AstcWorkerState;
+    if (st.getMiniGameHost() !== null) return 1;
     return (typeof Worker !== 'undefined' && typeof WebAssembly !== 'undefined') ? 1 : 0;
+  },
+
+  AstcWebWorker_GetWorkerCount: function () {
+    return AstcWorkerState.workers.length;
   },
 
   AstcWebWorker_Init: function (workerUrlPtr, maxWorkers, onReadyCb, onCompleteCb) {
     var st = AstcWorkerState;
-    if (typeof Worker === 'undefined' || typeof WebAssembly === 'undefined') {
+    var mgHost = st.getMiniGameHost();
+    if (!mgHost && (typeof Worker === 'undefined' || typeof WebAssembly === 'undefined')) {
       st.invokeCallback(onReadyCb, 'vii', [0, 0]);
       return 0;
     }
 
-    // Tear down any previous pool before reinitializing
     for (var i = 0; i < st.workers.length; i++) {
       try { st.workers[i].terminate(); } catch (_) {}
     }
@@ -128,6 +147,7 @@ var AstcWebWorkerPlugin = {
     st.initialized = false;
     st.readySent = false;
     st.simdEnabled = false;
+    st.isMiniGame = (mgHost !== null);
     st.onReadyCb = onReadyCb;
     st.onCompleteCb = onCompleteCb;
 
@@ -135,23 +155,49 @@ var AstcWebWorkerPlugin = {
     var hw = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) ? navigator.hardwareConcurrency : 2;
     var count = maxWorkers > 0 ? maxWorkers : Math.max(1, Math.min(hw, 4));
     if (count > 8) count = 8;
+    if (mgHost) {
+      count = 1;
+    }
 
     try {
       for (var w = 0; w < count; w++) {
         (function () {
-          var worker = new Worker(url);
-          worker.onmessage = function (ev) {
-            st.handleWorkerMessage(worker, ev);
-          };
-          worker.onerror = function () {
-            var idx = st.workers.indexOf(worker);
-            if (idx >= 0) st.workers.splice(idx, 1);
-            try { worker.terminate(); } catch (_) {}
-            if (st.workers.length === 0 && !st.readySent) {
-              st.readySent = true;
-              st.invokeCallback(st.onReadyCb, 'vii', [0, 0]);
+          var worker;
+          if (mgHost) {
+            try {
+              worker = mgHost.createWorker('workers/astcenc/astcenc-worker-minigame.js', { useExperimentalWorker: true });
+            } catch (_) {
+              worker = mgHost.createWorker('workers/astcenc/astcenc-worker-minigame.js');
             }
-          };
+            worker.onMessage(function (res) {
+              st.handleWorkerMessage(worker, res);
+            });
+            if (typeof worker.onError === 'function') {
+              worker.onError(function () {
+                var idx = st.workers.indexOf(worker);
+                if (idx >= 0) st.workers.splice(idx, 1);
+                try { worker.terminate(); } catch (_) {}
+                if (st.workers.length === 0 && !st.readySent) {
+                  st.readySent = true;
+                  st.invokeCallback(st.onReadyCb, 'vii', [0, 0]);
+                }
+              });
+            }
+          } else {
+            worker = new Worker(url);
+            worker.onmessage = function (ev) {
+              st.handleWorkerMessage(worker, ev);
+            };
+            worker.onerror = function () {
+              var idx = st.workers.indexOf(worker);
+              if (idx >= 0) st.workers.splice(idx, 1);
+              try { worker.terminate(); } catch (_) {}
+              if (st.workers.length === 0 && !st.readySent) {
+                st.readySent = true;
+                st.invokeCallback(st.onReadyCb, 'vii', [0, 0]);
+              }
+            };
+          }
           st.workers.push(worker);
           worker.postMessage({ type: 'init' });
         })();
@@ -195,12 +241,12 @@ var AstcWebWorkerPlugin = {
       return 0;
     }
 
-    // Copy pixel data out of Unity's WASM heap into a standalone transferable ArrayBuffer
     var copy = new Uint8Array(rgbaByteLen);
     copy.set(HEAPU8.subarray(rgbaPtr, rgbaPtr + rgbaByteLen));
 
     st.queue.push({
       jobId: jobId | 0,
+      transferBuffer: copy.buffer,
       message: {
         type: 'compress',
         jobId: jobId | 0,
@@ -219,6 +265,47 @@ var AstcWebWorkerPlugin = {
         mipCount: mipCount >>> 0,
         dataType: dataType | 0,
         rgbaBuffer: copy.buffer,
+        expectedOutLen: expectedOutLen | 0
+      }
+    });
+
+    st.dispatchNext();
+    return 1;
+  },
+
+  AstcWebWorker_DecompressAsync: function (
+    jobId,
+    profile,
+    blockX,
+    blockY,
+    width,
+    height,
+    outBitness,
+    astcPtr,
+    astcByteLen,
+    expectedOutLen
+  ) {
+    var st = AstcWorkerState;
+    if (!st.initialized || st.workers.length === 0) {
+      return 0;
+    }
+
+    var copy = new Uint8Array(astcByteLen);
+    copy.set(HEAPU8.subarray(astcPtr, astcPtr + astcByteLen));
+
+    st.queue.push({
+      jobId: jobId | 0,
+      transferBuffer: copy.buffer,
+      message: {
+        type: 'decompress',
+        jobId: jobId | 0,
+        profile: profile | 0,
+        blockX: blockX >>> 0,
+        blockY: blockY >>> 0,
+        width: width >>> 0,
+        height: height >>> 0,
+        outBitness: outBitness | 0,
+        astcBuffer: copy.buffer,
         expectedOutLen: expectedOutLen | 0
       }
     });

@@ -11,7 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 SUBMODULE_DIR="${REPO_ROOT}/ThirdParty/astc-encoder"
 SOURCE_DIR="${SUBMODULE_DIR}/Source"
-TARGET_DIR="${1:-${REPO_ROOT}/Assets/ASTC Encoder/Plugins/WebGL}"
+TARGET_DIR="${1:-${REPO_ROOT}/Assets/ASTC Encoder Web/Plugins/WebGL}"
 
 CPP_FILES=(
   "astcenc_averages_and_directions.cpp"

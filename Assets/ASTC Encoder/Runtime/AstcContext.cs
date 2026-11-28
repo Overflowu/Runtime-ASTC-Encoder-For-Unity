@@ -35,6 +35,7 @@ namespace Aperture.Astcenc.Runtime
         internal astcenc_profile Profile { get; }
         internal CodecFlags Flags { get; }
         internal bool IsDecompressOnly => (Flags & CodecFlags.DecompressOnly) != 0;
+        internal IntPtr Handle => m_Context;
 
         private unsafe struct AstcCompressParallelJob : IJobParallelFor
         {
@@ -179,6 +180,18 @@ namespace Aperture.Astcenc.Runtime
             return threadCount <= 0
                 ? Math.Max(1, Math.Min(Environment.ProcessorCount, 4))
                 : threadCount;
+#endif
+        }
+
+        internal static int ResolveAsyncThreadCount(int threadCount)
+        {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            if (AstcExtensionHooks.WebExecutor == null || !AstcExtensionHooks.WebExecutor.CanUseNativeThreads)
+                return 1;
+            int maxThreads = Math.Max(1, Math.Min(AstcExtensionHooks.WebExecutor.HardwareConcurrency, 4));
+            return threadCount <= 0 ? maxThreads : Math.Max(1, Math.Min(threadCount, maxThreads));
+#else
+            return ResolveThreadCount(threadCount);
 #endif
         }
 

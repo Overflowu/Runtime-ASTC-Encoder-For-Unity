@@ -127,7 +127,7 @@ jobs:
           retention-days: 7
 
   build-players:
-    name: Build (${{ matrix.targetPlatform }})
+    name: Build (${{ matrix.variant || matrix.targetPlatform }})
     needs: [native-abi-check, check-unity-license]
     if: needs.check-unity-license.outputs.has_license == 'true'
     runs-on: ubuntu-latest
@@ -145,6 +145,12 @@ jobs:
             customParameters: "-scriptingBackend IL2CPP -enableE2ESmoke"
           - targetPlatform: iOS
             customParameters: "-scriptingBackend IL2CPP -enableE2ESmoke"
+          - targetPlatform: WebGL
+            variant: WebGL
+            customParameters: "-scriptingBackend IL2CPP -enableE2ESmoke"
+          - targetPlatform: WebGL
+            variant: WebGL-Threads
+            customParameters: "-scriptingBackend IL2CPP -enableE2ESmoke -astcWebThreads"
     steps:
       - name: Checkout repository (with Git LFS)
         uses: actions/checkout@v4
@@ -161,12 +167,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: Library
-          key: Library-${{ matrix.targetPlatform }}-${{ env.UNITY_VERSION }}-${{ hashFiles('Assets/**', 'Packages/**', 'ProjectSettings/**') }}
+          key: Library-${{ matrix.variant || matrix.targetPlatform }}-${{ env.UNITY_VERSION }}-${{ hashFiles('Assets/**', 'Packages/**', 'ProjectSettings/**') }}
           restore-keys: |
-            Library-${{ matrix.targetPlatform }}-${{ env.UNITY_VERSION }}-
-            Library-${{ matrix.targetPlatform }}-
+            Library-${{ matrix.variant || matrix.targetPlatform }}-${{ env.UNITY_VERSION }}-
+            Library-${{ matrix.variant || matrix.targetPlatform }}-
 
-      - name: Build Unity Player for ${{ matrix.targetPlatform }}
+      - name: Build Unity Player for ${{ matrix.variant || matrix.targetPlatform }}
         uses: game-ci/unity-builder@v4
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
@@ -182,10 +188,10 @@ jobs:
           buildMethod: Aperture.Astcenc.Editor.CIBuildScript.Build
           customParameters: ${{ matrix.customParameters }}
 
-      - name: Upload ${{ matrix.targetPlatform }} build artifact
+      - name: Upload ${{ matrix.variant || matrix.targetPlatform }} build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: build-${{ matrix.targetPlatform }}
+          name: build-${{ matrix.variant || matrix.targetPlatform }}
           path: build/${{ matrix.targetPlatform }}
           retention-days: 7
 
@@ -380,3 +386,49 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             build
+
+  e2e-webgl:
+    name: E2E Browser (${{ matrix.variant }})
+    needs: build-players
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: WebGL
+            isolated: "false"
+          - variant: WebGL-Threads
+            isolated: "true"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download ${{ matrix.variant }} build
+        uses: actions/download-artifact@v4
+        with:
+          name: build-${{ matrix.variant }}
+          path: build/${{ matrix.variant }}
+
+      - name: Setup Node.js and Playwright Chromium
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Playwright
+        run: |
+          npm init -y >/dev/null 2>&1
+          npm install --no-save playwright
+          npx playwright install chromium
+
+      - name: Run headless Chromium WebGL E2E smoke test
+        run: |
+          WEB_DIR="$(dirname "$(find build/${{ matrix.variant }} -name 'index.html' | head -n 1)")"
+          ISO_FLAG=""
+          if [[ "${{ matrix.isolated }}" == "true" ]]; then
+            ISO_FLAG="--isolated"
+          fi
+          node .github/scripts/serve-webgl.mjs --dir "${WEB_DIR}" --port 8080 ${ISO_FLAG} &
+          SERVER_PID=$!
+          trap "kill ${SERVER_PID} 2>/dev/null || true" EXIT
+          sleep 2
+          node .github/scripts/webgl-e2e.mjs "http://127.0.0.1:8080/" 600000

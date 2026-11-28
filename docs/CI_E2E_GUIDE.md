@@ -11,6 +11,7 @@
 | **macOS Universal Standalone** | `ubuntu-latest` 构建 → `macos-latest` 运行 | 跨平台构建 `.app`，在真实 Apple Silicon macOS Runner 上加载通用二进制 `libastcenc-shared.dylib` 执行端到端压缩测试 |
 | **Android ARM64 (IL2CPP)** | `ubuntu-latest` 构建 → `macos-latest` 模拟器运行 | 构建 ARM64 `.apk`，校验 `lib/arm64-v8a/libastcenc-neon-shared.so` 打包，并在 ARM64 Android Emulator 上安装启动校验 `adb logcat` 输出 `ASTC_E2E_PASSED` |
 | **iOS ARM64 (IL2CPP)** | `ubuntu-latest` 导出 → `macos-latest` Xcode 编译 | 导出 Xcode 工程，并在 macOS Runner 上执行无签名 `xcodebuild -sdk iphoneos build`，验证 IL2CPP 编译与静态库 `libastcenc-neon-static.a` 链接 |
+| **WebGL & WebGL-Threads** | `ubuntu-latest` 构建 → Playwright Chromium 无头浏览器 | 分别构建标准版与开启 `threadsSupport` 的 WebGL Player，由 `serve-webgl.mjs` 提供静态/COOP-COEP 服务，在 SwiftShader WebGL2 Chromium 中验证 Worker、pthreads、RT 回读、`DecompressAsync` 与缓存同步并输出 `ASTC_E2E_PASSED` |
 
 ---
 

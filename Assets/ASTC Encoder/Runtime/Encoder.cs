@@ -182,12 +182,16 @@ namespace Aperture.Astcenc.Runtime
 
         public static void PreloadGpu(BlockSize blockSize = BlockSize.ASTC_6x6)
         {
-            AstcGpuBackend.Preload(blockSize);
+            if (AstcGpuBackend.IsSupported)
+                AstcGpuBackend.Preload(blockSize);
+            else if ((AstcExtensionHooks.ReadbackFallback != null && AstcExtensionHooks.ReadbackFallback.IsSupported))
+                AstcExtensionHooks.ReadbackFallback.Preload();
         }
 
         public static void ReleaseGpuCache()
         {
             AstcGpuBackend.ReleaseCache();
+            AstcExtensionHooks.ReadbackFallback.ReleaseCache();
         }
 
         /// <summary>
@@ -202,17 +206,22 @@ namespace Aperture.Astcenc.Runtime
         /// <summary>
         /// True on WebGL when the browser supports dedicated Web Workers and WebAssembly.
         /// </summary>
-        public static bool IsWebWorkerSupported => AstcWebWorkerBackend.IsSupported;
+        public static bool IsWebWorkerSupported => AstcExtensionHooks.WebExecutor != null && AstcExtensionHooks.WebExecutor.IsWorkerSupported;
 
         /// <summary>
         /// True when the WebGL Web Worker pool has finished initializing and async CPU APIs will offload off the main thread.
         /// </summary>
-        public static bool IsWebWorkerReady => AstcWebWorkerBackend.IsReady;
+        public static bool IsWebWorkerReady => AstcExtensionHooks.WebExecutor != null && AstcExtensionHooks.WebExecutor.IsWorkerReady;
 
         /// <summary>
         /// True when the initialized WebGL Web Worker pool selected the 128-bit WASM SIMD bundle.
         /// </summary>
-        public static bool IsWebWorkerSimdEnabled => AstcWebWorkerBackend.IsSimdEnabled;
+        public static bool IsWebWorkerSimdEnabled => AstcExtensionHooks.WebExecutor != null && AstcExtensionHooks.WebExecutor.IsWorkerSimdEnabled;
+
+        /// <summary>
+        /// Number of active WebGL Web Workers when ready, or 0 otherwise.
+        /// </summary>
+        public static int WebWorkerCount => AstcExtensionHooks.WebExecutor != null ? AstcExtensionHooks.WebExecutor.WorkerCount : 0;
 
         /// <summary>
         /// Initializes the non-blocking WebGL Web Worker pool for asynchronous CPU ASTC compression.
@@ -221,7 +230,7 @@ namespace Aperture.Astcenc.Runtime
         /// </summary>
         public static Task<bool> InitializeWebWorkerAsync(string workerScriptUrl = null, int maxWorkers = 0)
         {
-            return AstcWebWorkerBackend.InitializeAsync(workerScriptUrl, maxWorkers);
+            return AstcExtensionHooks.WebExecutor != null ? AstcExtensionHooks.WebExecutor.InitializeWorkerAsync(workerScriptUrl, maxWorkers) : Task.FromResult(false);
         }
 
         /// <summary>
@@ -229,17 +238,19 @@ namespace Aperture.Astcenc.Runtime
         /// </summary>
         public static void ShutdownWebWorker()
         {
-            AstcWebWorkerBackend.Shutdown();
+            AstcExtensionHooks.WebExecutor?.ShutdownWorker();
         }
 
         public static bool IsSupport(Texture texture, EncodeBackend backend = EncodeBackend.Auto)
         {
             return backend switch
             {
-                EncodeBackend.Cpu => AstcCpuBackend.IsSupported && AstcCpuBackend.IsInputSupported(texture),
+                EncodeBackend.Cpu => (AstcCpuBackend.IsSupported && AstcCpuBackend.IsInputSupported(texture))
+                                  || ((AstcExtensionHooks.ReadbackFallback != null && AstcExtensionHooks.ReadbackFallback.IsSupported) && AstcExtensionHooks.ReadbackFallback.IsInputSupported(texture)),
                 EncodeBackend.Gpu => AstcGpuBackend.IsSupported && AstcGpuBackend.IsInputSupported(texture),
                 EncodeBackend.Auto => (AstcGpuBackend.IsSupported && AstcGpuBackend.IsInputSupported(texture))
-                                   || (AstcCpuBackend.IsSupported && AstcCpuBackend.IsInputSupported(texture)),
+                                   || (AstcCpuBackend.IsSupported && AstcCpuBackend.IsInputSupported(texture))
+                                   || ((AstcExtensionHooks.ReadbackFallback != null && AstcExtensionHooks.ReadbackFallback.IsSupported) && AstcExtensionHooks.ReadbackFallback.IsInputSupported(texture)),
                 _ => false,
             };
         }
@@ -257,8 +268,22 @@ namespace Aperture.Astcenc.Runtime
         private static bool CanFallbackToCpu(Texture texture, EncodeBackend backend)
         {
             return backend == EncodeBackend.Auto
-                && AstcCpuBackend.IsSupported
-                && AstcCpuBackend.IsInputSupported(texture);
+                && ((AstcCpuBackend.IsSupported && AstcCpuBackend.IsInputSupported(texture))
+                    || ((AstcExtensionHooks.ReadbackFallback != null && AstcExtensionHooks.ReadbackFallback.IsSupported) && AstcExtensionHooks.ReadbackFallback.IsInputSupported(texture)));
+        }
+
+        private static bool ShouldUseReadback(Texture texture, EncodeBackend backend, bool needsGenerateMips = false)
+        {
+            if (backend == EncodeBackend.Gpu)
+                return false;
+
+            if (!(AstcExtensionHooks.ReadbackFallback != null && AstcExtensionHooks.ReadbackFallback.IsSupported) || !AstcExtensionHooks.ReadbackFallback.IsInputSupported(texture))
+                return false;
+
+            if (needsGenerateMips)
+                return true;
+
+            return !(AstcCpuBackend.IsSupported && AstcCpuBackend.IsInputSupported(texture));
         }
 
         /// <summary>
@@ -271,6 +296,11 @@ namespace Aperture.Astcenc.Runtime
                 AstcRaw gpuRaw = AstcGpuBackend.CompressTextureSync(inputTexture, textureType, blockSize, quality, includeMipmaps: true, useAlphaWeight: useAlphaWeight);
                 if (gpuRaw != null || !CanFallbackToCpu(inputTexture, backend))
                     return gpuRaw;
+            }
+
+            if (ShouldUseReadback(inputTexture, backend))
+            {
+                return AstcExtensionHooks.ReadbackFallback.CompressTextureSync(inputTexture, textureType, blockSize, quality, includeMipmaps: true, useAlphaWeight: useAlphaWeight, threadCount: threadCount);
             }
 
             return AstcCpuBackend.CompressTextureSync(inputTexture, textureType, blockSize, quality, threadCount: threadCount, includeMipmaps: true, useAlphaWeight: useAlphaWeight);
@@ -295,6 +325,11 @@ namespace Aperture.Astcenc.Runtime
                     return gpuRaw;
             }
 
+            if (ShouldUseReadback(inputTexture, options.Backend, options.GenerateMipmaps))
+            {
+                return AstcExtensionHooks.ReadbackFallback.CompressTextureSync(inputTexture, options.TextureType, options.BlockSize, options.Quality, options.IncludeMipmaps, options.UseAlphaWeight, options.GenerateMipmaps, options.ThreadCount, options.UsePerceptual, options.AlphaScaleRadius, options.UseUnityJobSystem);
+            }
+
             if (inputTexture is Texture2D tex2d)
             {
                 return AstcCpuBackend.CompressTextureSync(tex2d, options.TextureType, options.BlockSize, options.Quality, options.ThreadCount, options.IncludeMipmaps, options.UseAlphaWeight, options.UsePerceptual, options.AlphaScaleRadius, options.UseUnityJobSystem);
@@ -309,7 +344,13 @@ namespace Aperture.Astcenc.Runtime
         /// </summary>
         public static AstcRaw CompressTexture(this RenderTexture inputTexture, TextureType textureType = TextureType.Default, BlockSize blockSize = BlockSize.ASTC_6x6, CompressQuality quality = CompressQuality.Fast, bool includeMipmaps = true, bool useAlphaWeight = false)
         {
-            return AstcGpuBackend.CompressTextureSync(inputTexture, textureType, blockSize, quality, includeMipmaps, useAlphaWeight);
+            if (AstcGpuBackend.IsSupported)
+                return AstcGpuBackend.CompressTextureSync(inputTexture, textureType, blockSize, quality, includeMipmaps, useAlphaWeight);
+
+            if ((AstcExtensionHooks.ReadbackFallback != null && AstcExtensionHooks.ReadbackFallback.IsSupported))
+                return AstcExtensionHooks.ReadbackFallback.CompressTextureSync(inputTexture, textureType, blockSize, quality, includeMipmaps, useAlphaWeight);
+
+            return null;
         }
 
         /// <summary>
@@ -328,6 +369,11 @@ namespace Aperture.Astcenc.Runtime
                 AstcRaw gpuRaw = await AstcGpuBackend.CompressTextureAsync(inputTexture, textureType, blockSize, quality, includeMipmaps: true, useAlphaWeight: useAlphaWeight, cancellationToken: cancellationToken);
                 if (gpuRaw != null || !CanFallbackToCpu(inputTexture, backend))
                     return gpuRaw;
+            }
+
+            if (ShouldUseReadback(inputTexture, backend))
+            {
+                return await AstcExtensionHooks.ReadbackFallback.CompressTextureAsync(inputTexture, textureType, blockSize, quality, includeMipmaps: true, useAlphaWeight: useAlphaWeight, cancellationToken: cancellationToken, threadCount: threadCount);
             }
 
             return await AstcCpuBackend.CompressTextureAsync(inputTexture, textureType, blockSize, quality, threadCount: threadCount, includeMipmaps: true, useAlphaWeight: useAlphaWeight, cancellationToken: cancellationToken);
@@ -357,6 +403,11 @@ namespace Aperture.Astcenc.Runtime
                     return gpuRaw;
             }
 
+            if (ShouldUseReadback(inputTexture, options.Backend, options.GenerateMipmaps))
+            {
+                return await AstcExtensionHooks.ReadbackFallback.CompressTextureAsync(inputTexture, options.TextureType, options.BlockSize, options.Quality, options.IncludeMipmaps, options.UseAlphaWeight, cancellationToken, options.GenerateMipmaps, options.ThreadCount, options.UsePerceptual, options.AlphaScaleRadius);
+            }
+
             if (inputTexture is Texture2D tex2d)
             {
                 return await AstcCpuBackend.CompressTextureAsync(tex2d, options.TextureType, options.BlockSize, options.Quality, options.ThreadCount, options.IncludeMipmaps, options.UseAlphaWeight, cancellationToken, options.UsePerceptual, options.AlphaScaleRadius);
@@ -372,7 +423,13 @@ namespace Aperture.Astcenc.Runtime
         /// </summary>
         public static Task<AstcRaw> CompressTextureAsync(this RenderTexture inputTexture, TextureType textureType = TextureType.Default, BlockSize blockSize = BlockSize.ASTC_6x6, CompressQuality quality = CompressQuality.Fast, bool includeMipmaps = true, bool useAlphaWeight = false, CancellationToken cancellationToken = default)
         {
-            return AstcGpuBackend.CompressTextureAsync(inputTexture, textureType, blockSize, quality, includeMipmaps, useAlphaWeight, cancellationToken);
+            if (AstcGpuBackend.IsSupported)
+                return AstcGpuBackend.CompressTextureAsync(inputTexture, textureType, blockSize, quality, includeMipmaps, useAlphaWeight, cancellationToken);
+
+            if ((AstcExtensionHooks.ReadbackFallback != null && AstcExtensionHooks.ReadbackFallback.IsSupported))
+                return AstcExtensionHooks.ReadbackFallback.CompressTextureAsync(inputTexture, textureType, blockSize, quality, includeMipmaps, useAlphaWeight, cancellationToken);
+
+            return Task.FromResult<AstcRaw>(null);
         }
 
         /// <summary>
@@ -407,6 +464,11 @@ namespace Aperture.Astcenc.Runtime
                     return ok;
             }
 
+            if (ShouldUseReadback(inputTexture, backend))
+            {
+                return AstcExtensionHooks.ReadbackFallback.CompressInPlace(inputTexture, textureType, blockSize, quality, makeNoLongerReadable, useAlphaWeight, threadCount: threadCount);
+            }
+
             return AstcCpuBackend.CompressInPlace(inputTexture, textureType, blockSize, quality, makeNoLongerReadable, threadCount, useAlphaWeight);
         }
 
@@ -420,6 +482,11 @@ namespace Aperture.Astcenc.Runtime
                 bool ok = AstcGpuBackend.CompressInPlace(inputTexture, options.TextureType, options.BlockSize, options.Quality, options.MakeNoLongerReadable, options.UseAlphaWeight, options.GenerateMipmaps);
                 if (ok || !CanFallbackToCpu(inputTexture, options.Backend))
                     return ok;
+            }
+
+            if (ShouldUseReadback(inputTexture, options.Backend, options.GenerateMipmaps))
+            {
+                return AstcExtensionHooks.ReadbackFallback.CompressInPlace(inputTexture, options.TextureType, options.BlockSize, options.Quality, options.MakeNoLongerReadable, options.UseAlphaWeight, options.GenerateMipmaps, options.ThreadCount, options.UsePerceptual, options.AlphaScaleRadius, options.UseUnityJobSystem);
             }
 
             return AstcCpuBackend.CompressInPlace(inputTexture, options.TextureType, options.BlockSize, options.Quality, options.MakeNoLongerReadable, options.ThreadCount, options.UseAlphaWeight, options.UsePerceptual, options.AlphaScaleRadius, options.UseUnityJobSystem);
@@ -457,6 +524,11 @@ namespace Aperture.Astcenc.Runtime
                     return gpuTex;
             }
 
+            if (ShouldUseReadback(source, backend))
+            {
+                return AstcExtensionHooks.ReadbackFallback.CompressToTextureSync(source, textureType, blockSize, quality, includeMipmaps, useAlphaWeight);
+            }
+
             if (source is Texture2D tex2d)
             {
                 return AstcCpuBackend.CompressToTexture(tex2d, textureType, blockSize, quality, includeMipmaps, useAlphaWeight);
@@ -482,6 +554,11 @@ namespace Aperture.Astcenc.Runtime
                 Texture2D gpuTex = AstcGpuBackend.CompressToTexture(source, options.TextureType, options.BlockSize, options.Quality, options.IncludeMipmaps, options.UseAlphaWeight, options.GenerateMipmaps);
                 if (gpuTex != null || !CanFallbackToCpu(source, options.Backend))
                     return gpuTex;
+            }
+
+            if (ShouldUseReadback(source, options.Backend, options.GenerateMipmaps))
+            {
+                return AstcExtensionHooks.ReadbackFallback.CompressToTextureSync(source, options.TextureType, options.BlockSize, options.Quality, options.IncludeMipmaps, options.UseAlphaWeight, options.GenerateMipmaps, options.ThreadCount, options.UsePerceptual, options.AlphaScaleRadius, options.UseUnityJobSystem);
             }
 
             if (source is Texture2D tex2d)
@@ -527,6 +604,11 @@ namespace Aperture.Astcenc.Runtime
                     return gpuTex;
             }
 
+            if (ShouldUseReadback(source, backend))
+            {
+                return await AstcExtensionHooks.ReadbackFallback.CompressToTextureAsync(source, textureType, blockSize, quality, includeMipmaps, useAlphaWeight, cancellationToken, threadCount: threadCount);
+            }
+
             if (source is Texture2D tex2d)
             {
                 return await AstcCpuBackend.CompressToTextureAsync(tex2d, textureType, blockSize, quality, includeMipmaps, useAlphaWeight, threadCount, cancellationToken: cancellationToken);
@@ -559,13 +641,36 @@ namespace Aperture.Astcenc.Runtime
                     return gpuTex;
             }
 
+            if (ShouldUseReadback(source, options.Backend, options.GenerateMipmaps))
+            {
+                return await AstcExtensionHooks.ReadbackFallback.CompressToTextureAsync(source, options.TextureType, options.BlockSize, options.Quality, options.IncludeMipmaps, options.UseAlphaWeight, cancellationToken, options.GenerateMipmaps, options.ThreadCount, options.UsePerceptual, options.AlphaScaleRadius);
+            }
+
             if (source is Texture2D tex2d)
             {
-                return await AstcCpuBackend.CompressToTextureAsync(tex2d, options.TextureType, options.BlockSize, options.Quality, options.IncludeMipmaps, options.UseAlphaWeight, options.ThreadCount, options.UsePerceptual, options.AlphaScaleRadius, cancellationToken);
+                return await AstcCpuBackend.CompressTextureAsync(tex2d, options.TextureType, options.BlockSize, options.Quality, options.ThreadCount, options.IncludeMipmaps, options.UseAlphaWeight, cancellationToken, options.UsePerceptual, options.AlphaScaleRadius) is AstcRaw raw
+                    ? CreateTextureFromRawInternal(raw, tex2d.width, tex2d.height, tex2d.graphicsFormat, options.TextureType, options.BlockSize, tex2d.name)
+                    : null;
             }
 
             Debug.LogError("CPU backend only supports readable Texture2D. Use EncodeBackend.Gpu or EncodeBackend.Auto for RenderTexture inputs.");
             return null;
+        }
+
+        private static Texture2D CreateTextureFromRawInternal(AstcRaw raw, int width, int height, GraphicsFormat sourceFormat, TextureType textureType, BlockSize blockSize, string name)
+        {
+            using (raw)
+            {
+                GraphicsFormat targetFormat = GetTargetAstcFormat(sourceFormat, blockSize, textureType);
+                if (!CanCreateAstcTexture(targetFormat))
+                    return null;
+                int mipCount = AstcKtxContainer.InferMipCount(raw.Length, width, height, blockSize);
+                TextureCreationFlags flags = mipCount > 1 ? TextureCreationFlags.MipChain : TextureCreationFlags.None;
+                var tex = new Texture2D(width, height, targetFormat, mipCount, flags) { name = name };
+                tex.LoadRawTextureData(raw.Data, raw.Length);
+                tex.Apply(false, makeNoLongerReadable: true);
+                return tex;
+            }
         }
 
         /// <summary>
@@ -594,7 +699,14 @@ namespace Aperture.Astcenc.Runtime
             int sourceSlice = 0,
             int destSlice = 0)
         {
-            AstcGpuBackend.Encode(cmd, source, destination, textureType, blockSize, quality, sourceMip, destMip, destX, destY, useAlphaWeight, sourceSlice, destSlice);
+            if (AstcGpuBackend.IsSupported)
+            {
+                AstcGpuBackend.Encode(cmd, source, destination, textureType, blockSize, quality, sourceMip, destMip, destX, destY, useAlphaWeight, sourceSlice, destSlice);
+            }
+            else
+            {
+                if (AstcExtensionHooks.ReadbackFallback != null) AstcExtensionHooks.ReadbackFallback.EncodeAtlasTile(source, destination, textureType, blockSize, quality, sourceMip, destMip, destX, destY, useAlphaWeight, sourceSlice, destSlice);
+            }
         }
 
         /// <summary>
@@ -607,7 +719,15 @@ namespace Aperture.Astcenc.Runtime
                 Debug.LogError("Source Cubemap is null.");
                 return null;
             }
-            return AstcGpuBackend.CompressCubemap(source, options.TextureType, options.BlockSize, options.Quality, options.IncludeMipmaps, options.UseAlphaWeight);
+
+            if (AstcGpuBackend.IsSupported)
+                return AstcGpuBackend.CompressCubemap(source, options.TextureType, options.BlockSize, options.Quality, options.IncludeMipmaps, options.UseAlphaWeight);
+
+            if (options.Backend != EncodeBackend.Gpu && (AstcExtensionHooks.ReadbackFallback != null && AstcExtensionHooks.ReadbackFallback.IsSupported))
+                return AstcExtensionHooks.ReadbackFallback.CompressCubemap(source, options.TextureType, options.BlockSize, options.Quality, options.IncludeMipmaps, options.UseAlphaWeight);
+
+            Debug.LogError("ASTC Cubemap compression is not supported on this device.");
+            return null;
         }
 
         /// <summary>
@@ -620,7 +740,15 @@ namespace Aperture.Astcenc.Runtime
                 Debug.LogError("Source Texture2DArray is null.");
                 return null;
             }
-            return AstcGpuBackend.CompressTexture2DArray(source, options.TextureType, options.BlockSize, options.Quality, options.IncludeMipmaps, options.UseAlphaWeight);
+
+            if (AstcGpuBackend.IsSupported)
+                return AstcGpuBackend.CompressTexture2DArray(source, options.TextureType, options.BlockSize, options.Quality, options.IncludeMipmaps, options.UseAlphaWeight);
+
+            if (options.Backend != EncodeBackend.Gpu && (AstcExtensionHooks.ReadbackFallback != null && AstcExtensionHooks.ReadbackFallback.IsSupported))
+                return AstcExtensionHooks.ReadbackFallback.CompressTexture2DArray(source, options.TextureType, options.BlockSize, options.Quality, options.IncludeMipmaps, options.UseAlphaWeight);
+
+            Debug.LogError("ASTC Texture2DArray compression is not supported on this device.");
+            return null;
         }
 
         /// <summary>
@@ -806,8 +934,14 @@ namespace Aperture.Astcenc.Runtime
                 raw = AstcGpuBackend.CompressTextureSync(inputTexture, textureType, blockSize, quality, includeMipmaps: false, useAlphaWeight: useAlphaWeight);
                 if (raw == null && CanFallbackToCpu(inputTexture, backend))
                 {
-                    raw = AstcCpuBackend.CompressTextureSync((Texture2D)inputTexture, textureType, blockSize, quality, threadCount: threadCount, includeMipmaps: false, useAlphaWeight: useAlphaWeight);
+                    raw = ShouldUseReadback(inputTexture, backend)
+                        ? AstcExtensionHooks.ReadbackFallback.CompressTextureSync(inputTexture, textureType, blockSize, quality, includeMipmaps: false, useAlphaWeight: useAlphaWeight, threadCount: threadCount)
+                        : AstcCpuBackend.CompressTextureSync((Texture2D)inputTexture, textureType, blockSize, quality, threadCount: threadCount, includeMipmaps: false, useAlphaWeight: useAlphaWeight);
                 }
+            }
+            else if (ShouldUseReadback(inputTexture, backend))
+            {
+                raw = AstcExtensionHooks.ReadbackFallback.CompressTextureSync(inputTexture, textureType, blockSize, quality, includeMipmaps: false, useAlphaWeight: useAlphaWeight, threadCount: threadCount);
             }
             else if (inputTexture is Texture2D tex2d)
             {
@@ -842,8 +976,14 @@ namespace Aperture.Astcenc.Runtime
                 raw = AstcGpuBackend.CompressTextureSync(inputTexture, options.TextureType, options.BlockSize, options.Quality, includeMipmaps: false, useAlphaWeight: options.UseAlphaWeight);
                 if (raw == null && CanFallbackToCpu(inputTexture, options.Backend))
                 {
-                    raw = AstcCpuBackend.CompressTextureSync((Texture2D)inputTexture, options.TextureType, options.BlockSize, options.Quality, options.ThreadCount, includeMipmaps: false, options.UseAlphaWeight, options.UsePerceptual, options.AlphaScaleRadius);
+                    raw = ShouldUseReadback(inputTexture, options.Backend)
+                        ? AstcExtensionHooks.ReadbackFallback.CompressTextureSync(inputTexture, options.TextureType, options.BlockSize, options.Quality, includeMipmaps: false, useAlphaWeight: options.UseAlphaWeight, threadCount: options.ThreadCount, usePerceptual: options.UsePerceptual, alphaScaleRadius: options.AlphaScaleRadius, useUnityJobSystem: options.UseUnityJobSystem)
+                        : AstcCpuBackend.CompressTextureSync((Texture2D)inputTexture, options.TextureType, options.BlockSize, options.Quality, options.ThreadCount, includeMipmaps: false, options.UseAlphaWeight, options.UsePerceptual, options.AlphaScaleRadius);
                 }
+            }
+            else if (ShouldUseReadback(inputTexture, options.Backend))
+            {
+                raw = AstcExtensionHooks.ReadbackFallback.CompressTextureSync(inputTexture, options.TextureType, options.BlockSize, options.Quality, includeMipmaps: false, useAlphaWeight: options.UseAlphaWeight, threadCount: options.ThreadCount, usePerceptual: options.UsePerceptual, alphaScaleRadius: options.AlphaScaleRadius, useUnityJobSystem: options.UseUnityJobSystem);
             }
             else if (inputTexture is Texture2D tex2d)
             {
@@ -895,8 +1035,14 @@ namespace Aperture.Astcenc.Runtime
                 raw = await AstcGpuBackend.CompressTextureAsync(inputTexture, textureType, blockSize, quality, includeMipmaps: false, useAlphaWeight: useAlphaWeight, cancellationToken: cancellationToken);
                 if (raw == null && CanFallbackToCpu(inputTexture, backend))
                 {
-                    raw = await AstcCpuBackend.CompressTextureAsync((Texture2D)inputTexture, textureType, blockSize, quality, threadCount: threadCount, includeMipmaps: false, useAlphaWeight: useAlphaWeight, cancellationToken: cancellationToken);
+                    raw = ShouldUseReadback(inputTexture, backend)
+                        ? await AstcExtensionHooks.ReadbackFallback.CompressTextureAsync(inputTexture, textureType, blockSize, quality, includeMipmaps: false, useAlphaWeight: useAlphaWeight, cancellationToken: cancellationToken, threadCount: threadCount)
+                        : await AstcCpuBackend.CompressTextureAsync((Texture2D)inputTexture, textureType, blockSize, quality, threadCount: threadCount, includeMipmaps: false, useAlphaWeight: useAlphaWeight, cancellationToken: cancellationToken);
                 }
+            }
+            else if (ShouldUseReadback(inputTexture, backend))
+            {
+                raw = await AstcExtensionHooks.ReadbackFallback.CompressTextureAsync(inputTexture, textureType, blockSize, quality, includeMipmaps: false, useAlphaWeight: useAlphaWeight, cancellationToken: cancellationToken, threadCount: threadCount);
             }
             else if (inputTexture is Texture2D tex2d)
             {
@@ -939,8 +1085,14 @@ namespace Aperture.Astcenc.Runtime
                 raw = await AstcGpuBackend.CompressTextureAsync(inputTexture, options.TextureType, options.BlockSize, options.Quality, includeMipmaps: false, useAlphaWeight: options.UseAlphaWeight, cancellationToken: cancellationToken);
                 if (raw == null && CanFallbackToCpu(inputTexture, options.Backend))
                 {
-                    raw = await AstcCpuBackend.CompressTextureAsync((Texture2D)inputTexture, options.TextureType, options.BlockSize, options.Quality, options.ThreadCount, includeMipmaps: false, options.UseAlphaWeight, cancellationToken, options.UsePerceptual, options.AlphaScaleRadius);
+                    raw = ShouldUseReadback(inputTexture, options.Backend)
+                        ? await AstcExtensionHooks.ReadbackFallback.CompressTextureAsync(inputTexture, options.TextureType, options.BlockSize, options.Quality, includeMipmaps: false, useAlphaWeight: options.UseAlphaWeight, cancellationToken: cancellationToken, threadCount: options.ThreadCount, usePerceptual: options.UsePerceptual, alphaScaleRadius: options.AlphaScaleRadius)
+                        : await AstcCpuBackend.CompressTextureAsync((Texture2D)inputTexture, options.TextureType, options.BlockSize, options.Quality, options.ThreadCount, includeMipmaps: false, options.UseAlphaWeight, cancellationToken, options.UsePerceptual, options.AlphaScaleRadius);
                 }
+            }
+            else if (ShouldUseReadback(inputTexture, options.Backend))
+            {
+                raw = await AstcExtensionHooks.ReadbackFallback.CompressTextureAsync(inputTexture, options.TextureType, options.BlockSize, options.Quality, includeMipmaps: false, useAlphaWeight: options.UseAlphaWeight, cancellationToken: cancellationToken, threadCount: options.ThreadCount, usePerceptual: options.UsePerceptual, alphaScaleRadius: options.AlphaScaleRadius);
             }
             else if (inputTexture is Texture2D tex2d)
             {
@@ -1031,6 +1183,129 @@ namespace Aperture.Astcenc.Runtime
             bool makeNoLongerReadable = false)
         {
             return AstcCpuBackend.DecompressAstcFileToTexture(astcFileBytes, srgb, isHdr, threadCount, makeNoLongerReadable);
+        }
+
+        /// <summary>
+        /// Asynchronously software-decompresses raw ASTC block data (mip 0) into 4-channel RGBA bytes.
+        /// Uses background threads on native platforms, or pthreads / Web Workers on WebGL.
+        /// </summary>
+        public static Task<byte[]> DecompressAsync(
+            AstcRaw raw,
+            int width,
+            int height,
+            BlockSize blockSize,
+            bool srgb = false,
+            bool isHdr = false,
+            int outputBitness = 8,
+            int threadCount = 0,
+            CancellationToken cancellationToken = default)
+        {
+            if (cancellationToken.IsCancellationRequested)
+                return Task.FromCanceled<byte[]>(cancellationToken);
+            if (raw == null)
+                return Task.FromResult<byte[]>(null);
+
+            raw.ThrowIfDisposed();
+            return AstcCpuBackend.DecompressToBytesAsync(raw.Data, raw.Length, width, height, blockSize, srgb, isHdr, outputBitness, threadCount, cancellationToken);
+        }
+
+        /// <summary>
+        /// Asynchronously software-decompresses raw ASTC block bytes (mip 0) into 4-channel RGBA bytes.
+        /// </summary>
+        public static Task<byte[]> DecompressAsync(
+            byte[] compressedBytes,
+            int width,
+            int height,
+            BlockSize blockSize,
+            bool srgb = false,
+            bool isHdr = false,
+            int outputBitness = 8,
+            int threadCount = 0,
+            CancellationToken cancellationToken = default)
+        {
+            if (cancellationToken.IsCancellationRequested)
+                return Task.FromCanceled<byte[]>(cancellationToken);
+            if (compressedBytes == null)
+                return Task.FromResult<byte[]>(null);
+
+            return AstcCpuBackend.DecompressToBytesAsync(compressedBytes, 0, compressedBytes.Length, width, height, blockSize, srgb, isHdr, outputBitness, threadCount, cancellationToken);
+        }
+
+        /// <summary>
+        /// Asynchronously software-decompresses raw ASTC block data (mip 0) into an uncompressed RGBA <see cref="Texture2D"/>.
+        /// </summary>
+        public static async Task<Texture2D> DecompressToTextureAsync(
+            AstcRaw raw,
+            int width,
+            int height,
+            BlockSize blockSize,
+            bool srgb = false,
+            bool isHdr = false,
+            int threadCount = 0,
+            bool makeNoLongerReadable = false,
+            CancellationToken cancellationToken = default)
+        {
+            if (cancellationToken.IsCancellationRequested)
+                throw new OperationCanceledException(cancellationToken);
+            if (raw == null)
+                return null;
+
+            raw.ThrowIfDisposed();
+            int outBitness = isHdr ? 16 : 8;
+            byte[] rgba = await AstcCpuBackend.DecompressToBytesAsync(raw.Data, raw.Length, width, height, blockSize, srgb, isHdr, outBitness, threadCount, cancellationToken);
+            if (rgba == null)
+                return null;
+
+            GraphicsFormat targetFormat = isHdr
+                ? GraphicsFormat.R16G16B16A16_SFloat
+                : (srgb ? GraphicsFormat.R8G8B8A8_SRGB : GraphicsFormat.R8G8B8A8_UNorm);
+            var tex = new Texture2D(width, height, targetFormat, TextureCreationFlags.None);
+            tex.LoadRawTextureData(rgba);
+            tex.Apply(false, makeNoLongerReadable);
+            return tex;
+        }
+
+        /// <summary>
+        /// Asynchronously parses a standard .astc file (16-byte header + ASTC blocks) and software-decompresses it into an uncompressed RGBA <see cref="Texture2D"/>.
+        /// </summary>
+        public static async Task<Texture2D> DecompressAstcFileAsync(
+            byte[] astcFileBytes,
+            bool srgb = false,
+            bool isHdr = false,
+            int threadCount = 0,
+            bool makeNoLongerReadable = false,
+            CancellationToken cancellationToken = default)
+        {
+            if (cancellationToken.IsCancellationRequested)
+                throw new OperationCanceledException(cancellationToken);
+
+            if (!AstcHeader.TryParse(astcFileBytes, out BlockSize blockSize, out int width, out int height, out int depth, out int payloadOffset))
+            {
+                Debug.LogError("Invalid .astc file header.");
+                return null;
+            }
+            if (depth != 1)
+            {
+                Debug.LogError("3D ASTC textures are not supported.");
+                return null;
+            }
+
+            int payloadLen = astcFileBytes.Length - payloadOffset;
+            if (payloadLen <= 0)
+                return null;
+
+            int outBitness = isHdr ? 16 : 8;
+            byte[] rgba = await AstcCpuBackend.DecompressToBytesAsync(astcFileBytes, payloadOffset, payloadLen, width, height, blockSize, srgb, isHdr, outBitness, threadCount, cancellationToken);
+            if (rgba == null)
+                return null;
+
+            GraphicsFormat targetFormat = isHdr
+                ? GraphicsFormat.R16G16B16A16_SFloat
+                : (srgb ? GraphicsFormat.R8G8B8A8_SRGB : GraphicsFormat.R8G8B8A8_UNorm);
+            var tex = new Texture2D(width, height, targetFormat, TextureCreationFlags.None);
+            tex.LoadRawTextureData(rgba);
+            tex.Apply(false, makeNoLongerReadable);
+            return tex;
         }
 
         /// <summary>

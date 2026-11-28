@@ -214,4 +214,124 @@ int astcenc_worker_compress(
     return static_cast<int>(ASTCENC_SUCCESS);
 }
 
+namespace
+{
+struct DecompKey
+{
+    int profile;
+    unsigned int block_x;
+    unsigned int block_y;
+
+    bool operator<(const DecompKey& o) const
+    {
+        return std::tie(profile, block_x, block_y) < std::tie(o.profile, o.block_x, o.block_y);
+    }
+};
+
+std::map<DecompKey, astcenc_context*> g_decompCache;
+
+astcenc_context* GetOrCreateDecompContext(
+    astcenc_profile profile,
+    unsigned int block_x,
+    unsigned int block_y,
+    astcenc_error* out_err)
+{
+    DecompKey key{ static_cast<int>(profile), block_x, block_y };
+    auto it = g_decompCache.find(key);
+    if (it != g_decompCache.end())
+    {
+        *out_err = ASTCENC_SUCCESS;
+        return it->second;
+    }
+
+    if (g_decompCache.size() >= 8)
+    {
+        auto oldest = g_decompCache.begin();
+        astcenc_context_free(oldest->second);
+        g_decompCache.erase(oldest);
+    }
+
+    astcenc_config cfg{};
+    astcenc_error err = astcenc_config_init(profile, block_x, block_y, 1, ASTCENC_PRE_FAST, ASTCENC_FLG_DECOMPRESS_ONLY, &cfg);
+    if (err != ASTCENC_SUCCESS)
+    {
+        *out_err = err;
+        return nullptr;
+    }
+
+    astcenc_context* ctx = nullptr;
+    err = astcenc_context_alloc(&cfg, 1, &ctx, nullptr);
+    if (err != ASTCENC_SUCCESS || ctx == nullptr)
+    {
+        *out_err = (err != ASTCENC_SUCCESS) ? err : ASTCENC_ERR_OUT_OF_MEM;
+        return nullptr;
+    }
+
+    g_decompCache.emplace(key, ctx);
+    *out_err = ASTCENC_SUCCESS;
+    return ctx;
+}
+} // namespace
+
+int astcenc_worker_decompress(
+    int profile,
+    unsigned int block_x,
+    unsigned int block_y,
+    unsigned int width,
+    unsigned int height,
+    int out_bitness,
+    uint8_t* astc_in,
+    size_t astc_in_len,
+    uint8_t* rgba_out,
+    size_t rgba_out_len)
+{
+    if (!astc_in || !rgba_out || width == 0 || height == 0 || astc_in_len == 0)
+    {
+        return static_cast<int>(ASTCENC_ERR_BAD_PARAM);
+    }
+
+    astcenc_type astc_type = ASTCENC_TYPE_U8;
+    size_t bytes_per_pixel = 4;
+    if (out_bitness == 8)
+    {
+        astc_type = ASTCENC_TYPE_U8;
+        bytes_per_pixel = 4;
+    }
+    else if (out_bitness == 16)
+    {
+        astc_type = ASTCENC_TYPE_F16;
+        bytes_per_pixel = 8;
+    }
+    else if (out_bitness == 32)
+    {
+        astc_type = ASTCENC_TYPE_F32;
+        bytes_per_pixel = 16;
+    }
+    else
+    {
+        return static_cast<int>(ASTCENC_ERR_BAD_PARAM);
+    }
+
+    size_t required_out = static_cast<size_t>(width) * static_cast<size_t>(height) * bytes_per_pixel;
+    if (rgba_out_len < required_out)
+    {
+        return static_cast<int>(ASTCENC_ERR_OUT_OF_MEM);
+    }
+
+    astcenc_error err = ASTCENC_SUCCESS;
+    astcenc_context* ctx = GetOrCreateDecompContext(static_cast<astcenc_profile>(profile), block_x, block_y, &err);
+    if (!ctx)
+    {
+        return static_cast<int>(err);
+    }
+
+    void* slices[1] = { rgba_out };
+    astcenc_image img{ width, height, 1u, astc_type, slices };
+    astcenc_swizzle swizzle{ ASTCENC_SWZ_R, ASTCENC_SWZ_G, ASTCENC_SWZ_B, ASTCENC_SWZ_A };
+
+    err = astcenc_decompress_image(ctx, astc_in, astc_in_len, &img, &swizzle, 0u);
+    astcenc_decompress_reset(ctx);
+    return static_cast<int>(err);
+}
+
 } // extern "C"

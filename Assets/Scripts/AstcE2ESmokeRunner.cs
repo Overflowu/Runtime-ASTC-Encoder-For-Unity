@@ -15,7 +15,7 @@ public static class AstcE2ESmokeRunner
 
 #if !UNITY_EDITOR
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
-    private static void RunIfRequested()
+    private static async void RunIfRequested()
     {
         if (!ShouldRun())
         {
@@ -32,6 +32,7 @@ public static class AstcE2ESmokeRunner
             VerifyNonSquareMipmaps();
             VerifyNormalAndMultiFormats();
             VerifyInPlaceCompressIfSupported();
+            await VerifyAsyncAndWebParityAsync();
 
             Debug.Log($"{LogPrefix} ASTC_E2E_PASSED");
             Application.Quit(0);
@@ -258,5 +259,69 @@ public static class AstcE2ESmokeRunner
         {
             UnityEngine.Object.DestroyImmediate(tex);
         }
+    }
+
+    private static async System.Threading.Tasks.Task VerifyAsyncAndWebParityAsync()
+    {
+        Debug.Log($"{LogPrefix} WebWorkerSupported={Encoder.IsWebWorkerSupported}, Ready={Encoder.IsWebWorkerReady}, Simd={Encoder.IsWebWorkerSimdEnabled}, Count={Encoder.WebWorkerCount}");
+
+        // 1. RenderTexture compression (tests GPU Compute on native, or AstcReadbackBridge on WebGL2)
+        if (SystemInfo.supportsRenderTextures)
+        {
+            var rt = new RenderTexture(32, 32, 0, RenderTextureFormat.ARGB32)
+            {
+                useMipMap = false,
+                autoGenerateMips = false
+            };
+            rt.Create();
+            try
+            {
+                Texture2D src = CreateProceduralTexture(32, 32, TextureFormat.RGBA32, false, linear: true);
+                try
+                {
+                    Graphics.Blit(src, rt);
+                }
+                finally
+                {
+                    UnityEngine.Object.DestroyImmediate(src);
+                }
+
+                AssertTrue(Encoder.IsSupport(rt), "Expected RenderTexture to be supported via GPU or ReadbackBridge.");
+                var opts = AstcCompressOptions.Default;
+                opts.BlockSize = BlockSize.ASTC_6x6;
+                opts.Quality = CompressQuality.Fastest;
+                opts.GenerateMipmaps = true;
+                opts.IncludeMipmaps = true;
+
+                using (AstcRaw rtRaw = await rt.CompressTextureAsync(opts))
+                {
+                    AssertTrue(rtRaw != null && rtRaw.Length > 0, "Async RenderTexture compression with GenerateMipmaps returned null/empty.");
+                }
+            }
+            finally
+            {
+                rt.Release();
+                UnityEngine.Object.DestroyImmediate(rt);
+            }
+        }
+
+        // 2. DecompressAsync round-trip (all platforms, exercises Worker/pthreads on WebGL)
+        Texture2D tex = CreateProceduralTexture(32, 32, TextureFormat.RGBA32, false, linear: true);
+        try
+        {
+            using (AstcRaw raw = await tex.CompressTextureAsync(TextureType.Default, BlockSize.ASTC_4x4, CompressQuality.Fastest))
+            {
+                AssertTrue(raw != null && raw.Length > 0, "CompressTextureAsync returned null.");
+                byte[] decoded = await Encoder.DecompressAsync(raw, 32, 32, BlockSize.ASTC_4x4);
+                AssertTrue(decoded != null && decoded.Length == 32 * 32 * 4, "DecompressAsync returned invalid pixel length.");
+            }
+        }
+        finally
+        {
+            UnityEngine.Object.DestroyImmediate(tex);
+        }
+
+        // 3. DiskCache FlushAsync smoke
+        await AstcDiskCache.FlushAsync();
     }
 }

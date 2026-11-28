@@ -2,6 +2,17 @@
 
 All notable changes to `com.aperture.astcenc` (Runtime ASTC Encoder for Unity) are documented in this file.
 
+## [2.4.0] - 2026-11-28
+
+### Added
+- **Full Web Platform Feature Parity (WebGL2 & Tuanjie Engine / MiniGames)**:
+  - **GPU-Readback Fallback Bridge (`AstcReadbackBridge` + `AstcReadbackBlit.shader` + `AstcAtlasShadowUpdater`)**: Enables `RenderTexture` inputs, non-readable `Texture2D`, `GenerateMipmaps` box-downsample chains, `CompressCubemap`, `CompressTexture2DArray`, and `Encoder.Encode(CommandBuffer, ...)` atlas tile updates on platforms without Compute Shaders (such as WebGL2 and Tuanjie MiniGames).
+  - **Emscripten Pthreads Native Multi-Threading (`astcenc_wasm_mt.cpp` + `AstcWebExecutor`)**: Non-blocking multi-threaded C++ ASTC compression and decompression on WebGL when `PlayerSettings.WebGL.threadsSupport` and COOP/COEP (`crossOriginIsolated`) are active.
+  - **Cross-Platform `DecompressAsync` APIs**: New `Encoder.DecompressAsync`, `Encoder.DecompressToTextureAsync`, and `Encoder.DecompressAstcFileAsync` backed by background thread pools on native platforms and pthreads / Web Workers on WebGL.
+  - **Automatic Worker Bundling, Auto-Initialization & Settings UI**: `AstcWebBuildSettings` (`Project Settings > ASTC Encoder > Web & MiniGame`) and enhanced `AstcWebGLBuildProcessor` that bundle prebuilt Worker JS/WASM assets, emit runtime auto-init config, and configure `workers` in `game.json` for Tuanjie MiniGames (`wx`/`tt`/`ks`).
+  - **Persistent Web Disk Cache (`AstcDiskCache` + `AstcWebFs.jslib`)**: Debounced `FS.syncfs` IndexedDB persistence on WebGL, `FileSystemManager` persistence on Tuanjie MiniGames, plus `AstcDiskCache.DefaultCacheDirectory` and `AstcDiskCache.FlushAsync()`.
+  - **Playwright Headless WebGL E2E CI**: Added `serve-webgl.mjs`, `webgl-e2e.mjs`, `test-webgl-worker.mjs`, and `e2e-webgl` (Standard + Threads) jobs in `unity-multiplatform-e2e.yml`.
+
 ## [2.3.0] - 2026-11-28
 
 ### Added

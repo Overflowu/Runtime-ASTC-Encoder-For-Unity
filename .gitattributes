@@ -61,6 +61,7 @@
 *.swiftmodule filter=lfs diff=lfs merge=lfs
 *.swiftdoc    filter=lfs diff=lfs merge=lfs
 *.bundle      filter=lfs diff=lfs merge=lfs
+*.wasm        filter=lfs diff=lfs merge=lfs
 
 # Debug information, really should not get committed into repository
 # Program database

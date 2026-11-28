@@ -128,14 +128,17 @@ namespace Aperture.Astcenc.Runtime
         /// </summary>
         public long MaxGpuTexelsPerFrame { get; set; } = 1024L * 1024L;
 
+        private int m_MaxConcurrentCpuTasks = -1;
+
         /// <summary>
-        /// Maximum number of concurrent background CPU compression jobs (default: half of logical cores, minimum 1; always 1 on WebGL).
+        /// Maximum number of concurrent background CPU compression jobs.
+        /// Defaults to half of logical cores on native platforms, or Web pthreads/Worker concurrency on WebGL (1 when inline).
         /// </summary>
-#if UNITY_WEBGL && !UNITY_EDITOR
-        public int MaxConcurrentCpuTasks { get; set; } = 1;
-#else
-        public int MaxConcurrentCpuTasks { get; set; } = Math.Max(1, Environment.ProcessorCount / 2);
-#endif
+        public int MaxConcurrentCpuTasks
+        {
+            get => m_MaxConcurrentCpuTasks > 0 ? m_MaxConcurrentCpuTasks : AstcExtensionHooks.DefaultCpuConcurrency;
+            set => m_MaxConcurrentCpuTasks = value;
+        }
 
         public int PendingGpuCount => m_GpuQueues[0].Count + m_GpuQueues[1].Count + m_GpuQueues[2].Count;
         public int PendingCpuCount => m_CpuQueues[0].Count + m_CpuQueues[1].Count + m_CpuQueues[2].Count;
@@ -398,8 +401,13 @@ namespace Aperture.Astcenc.Runtime
         {
             bool useGpu = job.Options.Backend == EncodeBackend.Gpu ||
                           (job.Options.Backend == EncodeBackend.Auto && Encoder.IsGpuSupported);
+            bool useReadback = !useGpu && job.Options.Backend != EncodeBackend.Gpu
+                && AstcExtensionHooks.ReadbackFallback != null
+                && AstcExtensionHooks.ReadbackFallback.IsSupported
+                && AstcExtensionHooks.ReadbackFallback.IsInputSupported(job.Source)
+                && (job.Options.GenerateMipmaps || !AstcCpuBackend.IsInputSupported(job.Source));
             int bucket = ClampPriority(job.Priority);
-            if (useGpu)
+            if (useGpu || useReadback)
                 m_GpuQueues[bucket].Enqueue(job);
             else
                 m_CpuQueues[bucket].Enqueue(job);
@@ -466,18 +474,20 @@ namespace Aperture.Astcenc.Runtime
             {
                 AstcRaw raw;
 #if UNITY_WEBGL && !UNITY_EDITOR
-                if (AstcWebWorkerBackend.IsReady)
+                if (AstcExtensionHooks.WebExecutor != null &&
+                    (AstcExtensionHooks.WebExecutor.IsPthreadsActive || AstcExtensionHooks.WebExecutor.IsWorkerReady))
                 {
-                    raw = await AstcWebWorkerBackend.CompressTextureAsync(
+                    raw = await AstcCpuBackend.CompressTextureAsync(
                         tex2d,
                         job.Options.TextureType,
                         job.Options.BlockSize,
                         job.Options.Quality,
+                        job.Options.ThreadCount,
                         job.Options.IncludeMipmaps,
                         job.Options.UseAlphaWeight,
+                        job.CancellationToken,
                         job.Options.UsePerceptual,
-                        job.Options.AlphaScaleRadius,
-                        job.CancellationToken);
+                        job.Options.AlphaScaleRadius);
                 }
                 else
 #endif

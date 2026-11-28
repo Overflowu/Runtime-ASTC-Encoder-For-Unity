@@ -57,6 +57,22 @@ namespace Aperture.Astcenc.Runtime
             int expectedOutLen);
 
         [DllImport("__Internal")]
+        private static extern int AstcWebWorker_DecompressAsync(
+            int jobId,
+            int profile,
+            uint blockX,
+            uint blockY,
+            uint width,
+            uint height,
+            int outBitness,
+            IntPtr astcPtr,
+            int astcByteLen,
+            int expectedOutLen);
+
+        [DllImport("__Internal")]
+        private static extern int AstcWebWorker_GetWorkerCount();
+
+        [DllImport("__Internal")]
         private static extern void AstcWebWorker_Cancel(int jobId);
 
         [DllImport("__Internal")]
@@ -64,8 +80,17 @@ namespace Aperture.Astcenc.Runtime
 
         private sealed class PendingJob
         {
-            public TaskCompletionSource<AstcRaw> Tcs;
+            public TaskCompletionSource<AstcRaw> CompressTcs;
+            public TaskCompletionSource<byte[]> DecompressTcs;
             public CancellationTokenRegistration CancelRegistration;
+        }
+
+        [Serializable]
+        private sealed class RuntimeConfigJson
+        {
+            public bool autoInit = true;
+            public int maxWorkers = 0;
+            public string workerUrl = "";
         }
 
         private static readonly Dictionary<int, PendingJob> s_PendingJobs = new Dictionary<int, PendingJob>();
@@ -91,6 +116,15 @@ namespace Aperture.Astcenc.Runtime
 
         internal static bool IsReady => s_IsReady;
         internal static bool IsSimdEnabled => s_IsSimdEnabled;
+        internal static int WorkerCount
+        {
+            get
+            {
+                if (!s_IsReady) return 0;
+                try { return Math.Max(1, AstcWebWorker_GetWorkerCount()); }
+                catch { return 1; }
+            }
+        }
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
         private static void ResetStatics()
@@ -98,6 +132,43 @@ namespace Aperture.Astcenc.Runtime
             Shutdown();
             Application.quitting -= Shutdown;
             Application.quitting += Shutdown;
+        }
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
+        private static void AutoInitializeOnLoad()
+        {
+            if (s_IsReady || s_InitTcs != null || !IsSupported)
+                return;
+
+            // If native pthreads are available and active, prefer pthreads and skip eager worker startup.
+            if (AstcWebPlatform.CanUseNativeThreads)
+                return;
+
+            TextAsset cfgAsset = Resources.Load<TextAsset>("AstcWebRuntimeConfig");
+            if (cfgAsset == null)
+                return;
+
+            try
+            {
+                RuntimeConfigJson cfg = JsonUtility.FromJson<RuntimeConfigJson>(cfgAsset.text);
+                if (cfg != null && cfg.autoInit)
+                {
+                    _ = InitializeAsync(string.IsNullOrEmpty(cfg.workerUrl) ? null : cfg.workerUrl, cfg.maxWorkers);
+                }
+            }
+            catch
+            {
+                // Ignore malformed config; manual InitializeWebWorkerAsync remains available.
+            }
+        }
+
+        internal static Task<bool> EnsureInitializedAsync()
+        {
+            if (s_IsReady)
+                return Task.FromResult(true);
+            if (s_InitTcs != null)
+                return s_InitTcs.Task;
+            return Task.FromResult(false);
         }
 
         internal static Task<bool> InitializeAsync(string workerScriptUrl = null, int maxWorkers = 0)
@@ -154,7 +225,8 @@ namespace Aperture.Astcenc.Runtime
             foreach (var kv in s_PendingJobs)
             {
                 kv.Value.CancelRegistration.Dispose();
-                kv.Value.Tcs.TrySetCanceled();
+                kv.Value.CompressTcs?.TrySetCanceled();
+                kv.Value.DecompressTcs?.TrySetCanceled();
             }
             s_PendingJobs.Clear();
         }
@@ -183,9 +255,25 @@ namespace Aperture.Astcenc.Runtime
             {
                 if (status != 0)
                 {
-                    Debug.LogError($"WebGL Web Worker ASTC compression failed (status={status}).");
+                    Debug.LogError($"WebGL Web Worker ASTC operation failed (status={status}).");
                 }
-                job.Tcs.TrySetResult(null);
+                job.CompressTcs?.TrySetResult(null);
+                job.DecompressTcs?.TrySetResult(null);
+                return;
+            }
+
+            if (job.DecompressTcs != null)
+            {
+                try
+                {
+                    byte[] output = new byte[byteLength];
+                    Marshal.Copy(dataPtr, output, 0, byteLength);
+                    job.DecompressTcs.TrySetResult(output);
+                }
+                catch (Exception ex)
+                {
+                    job.DecompressTcs.TrySetException(ex);
+                }
                 return;
             }
 
@@ -196,12 +284,12 @@ namespace Aperture.Astcenc.Runtime
                 {
                     UnsafeUtility.MemCpy((void*)owned, (void*)dataPtr, byteLength);
                 }
-                job.Tcs.TrySetResult(new AstcRaw(owned, byteLength));
+                job.CompressTcs?.TrySetResult(new AstcRaw(owned, byteLength));
             }
             catch (Exception ex)
             {
                 Marshal.FreeHGlobal(owned);
-                job.Tcs.TrySetException(ex);
+                job.CompressTcs?.TrySetException(ex);
             }
         }
 
@@ -290,6 +378,47 @@ namespace Aperture.Astcenc.Runtime
                 cancellationToken);
         }
 
+        internal static unsafe Task<AstcRaw> CompressSnapshotAsync(
+            IntPtr pixelPtr,
+            int pixelByteLength,
+            int width,
+            int height,
+            int mipCount,
+            GraphicsFormat sourceFormat,
+            TextureType textureType,
+            BlockSize blockSize,
+            CompressQuality quality,
+            bool useAlphaWeight,
+            bool usePerceptual,
+            uint alphaScaleRadius,
+            CancellationToken cancellationToken)
+        {
+            if (cancellationToken.IsCancellationRequested)
+                return Task.FromCanceled<AstcRaw>(cancellationToken);
+
+            if (!s_IsReady || pixelPtr == IntPtr.Zero)
+                return Task.FromResult<AstcRaw>(null);
+
+            if (!Encoder.GetBlockSize(blockSize, out uint blockX, out uint blockY, out _))
+                return Task.FromResult<AstcRaw>(null);
+
+            return DispatchPixelsAsync(
+                (void*)pixelPtr,
+                pixelByteLength,
+                width,
+                height,
+                mipCount,
+                sourceFormat,
+                textureType,
+                blockX,
+                blockY,
+                quality,
+                useAlphaWeight,
+                usePerceptual,
+                alphaScaleRadius,
+                cancellationToken);
+        }
+
         private static unsafe Task<AstcRaw> DispatchPixelsAsync(
             void* srcPtr,
             int srcByteLength,
@@ -341,7 +470,7 @@ namespace Aperture.Astcenc.Runtime
 
                 int jobId = ++s_NextJobId;
                 var tcs = new TaskCompletionSource<AstcRaw>();
-                var job = new PendingJob { Tcs = tcs };
+                var job = new PendingJob { CompressTcs = tcs };
 
                 if (cancellationToken.CanBeCanceled)
                 {
@@ -397,7 +526,7 @@ namespace Aperture.Astcenc.Runtime
             }
         }
 
-        private static unsafe bool PrepareRgba4Buffer(
+        internal static unsafe bool PrepareRgba4Buffer(
             void* srcPtr,
             int srcByteLength,
             int totalPixels,
@@ -524,6 +653,77 @@ namespace Aperture.Astcenc.Runtime
             }
         }
 
+        internal static unsafe Task<byte[]> DecompressAsync(
+            IntPtr astcPtr,
+            int astcByteLength,
+            int width,
+            int height,
+            BlockSize blockSize,
+            bool srgb,
+            bool isHdr,
+            int outputBitness,
+            CancellationToken cancellationToken)
+        {
+            if (cancellationToken.IsCancellationRequested)
+                return Task.FromCanceled<byte[]>(cancellationToken);
+
+            if (!s_IsReady || astcPtr == IntPtr.Zero || astcByteLength <= 0 || width <= 0 || height <= 0)
+                return Task.FromResult<byte[]>(null);
+
+            if (!Encoder.GetBlockSize(blockSize, out uint blockX, out uint blockY, out _))
+                return Task.FromResult<byte[]>(null);
+
+            int bpp = outputBitness == 32 ? 16 : (outputBitness == 16 ? 8 : 4);
+            long expectedOutLong = (long)width * height * bpp;
+            if (expectedOutLong <= 0 || expectedOutLong > int.MaxValue)
+                return Task.FromResult<byte[]>(null);
+
+            astcenc_profile profile = isHdr
+                ? astcenc_profile.ASTCENC_PRF_HDR
+                : (srgb ? astcenc_profile.ASTCENC_PRF_LDR_SRGB : astcenc_profile.ASTCENC_PRF_LDR);
+
+            int jobId = ++s_NextJobId;
+            var tcs = new TaskCompletionSource<byte[]>();
+            var job = new PendingJob { DecompressTcs = tcs };
+
+            if (cancellationToken.CanBeCanceled)
+            {
+                job.CancelRegistration = cancellationToken.Register(() =>
+                {
+                    if (s_PendingJobs.Remove(jobId))
+                    {
+                        AstcWebWorker_Cancel(jobId);
+                        tcs.TrySetCanceled(cancellationToken);
+                    }
+                });
+            }
+
+            s_PendingJobs[jobId] = job;
+
+            int queued = AstcWebWorker_DecompressAsync(
+                jobId,
+                (int)profile,
+                blockX,
+                blockY,
+                (uint)width,
+                (uint)height,
+                outputBitness,
+                astcPtr,
+                astcByteLength,
+                (int)expectedOutLong);
+
+            if (queued == 0)
+            {
+                if (s_PendingJobs.Remove(jobId))
+                {
+                    job.CancelRegistration.Dispose();
+                }
+                return Task.FromResult<byte[]>(null);
+            }
+
+            return tcs.Task;
+        }
+
         private static string CombineStreamingAssetsUrl(string relativePath)
         {
             string basePath = Application.streamingAssetsPath;
@@ -535,7 +735,9 @@ namespace Aperture.Astcenc.Runtime
         internal static bool IsSupported => false;
         internal static bool IsReady => false;
         internal static bool IsSimdEnabled => false;
+        internal static int WorkerCount => 0;
 
+        internal static Task<bool> EnsureInitializedAsync() => Task.FromResult(false);
         internal static Task<bool> InitializeAsync(string workerScriptUrl = null, int maxWorkers = 0) => Task.FromResult(false);
         internal static void Shutdown() { }
 
@@ -563,6 +765,32 @@ namespace Aperture.Astcenc.Runtime
             bool usePerceptual,
             uint alphaScaleRadius,
             CancellationToken cancellationToken) => Task.FromResult<AstcRaw>(null);
+
+        internal static Task<AstcRaw> CompressSnapshotAsync(
+            IntPtr pixelPtr,
+            int pixelByteLength,
+            int width,
+            int height,
+            int mipCount,
+            GraphicsFormat sourceFormat,
+            TextureType textureType,
+            BlockSize blockSize,
+            CompressQuality quality,
+            bool useAlphaWeight,
+            bool usePerceptual,
+            uint alphaScaleRadius,
+            CancellationToken cancellationToken) => Task.FromResult<AstcRaw>(null);
+
+        internal static Task<byte[]> DecompressAsync(
+            IntPtr astcPtr,
+            int astcByteLength,
+            int width,
+            int height,
+            BlockSize blockSize,
+            bool srgb,
+            bool isHdr,
+            int outputBitness,
+            CancellationToken cancellationToken) => Task.FromResult<byte[]>(null);
 #endif
     }
 }

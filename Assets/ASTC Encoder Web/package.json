@@ -1,0 +1,19 @@
+{
+  "name": "com.aperture.astcenc.web",
+  "displayName": "Runtime ASTC Encoder - Web Extension",
+  "version": "2.4.0",
+  "unity": "2021.3",
+  "keywords": ["Texture", "ASTC", "Runtime", "WebGL", "WASM", "WebWorker", "Tuanjie", "MiniGame"],
+  "description": "Optional WebGL2 & Tuanjie MiniGame extension for Runtime ASTC Encoder (com.aperture.astcenc): Emscripten WASM + SIMD128 + pthreads, auto-bundled Web Worker pool, GPU-readback fallback bridge, and persistent IDBFS / MiniGame disk cache.",
+  "license": "MIT",
+  "documentationUrl": "https://github.com/Overflowu/Runtime-ASTC-Encoder-For-Unity/blob/master/docs/API.md",
+  "changelogUrl": "https://github.com/Overflowu/Runtime-ASTC-Encoder-For-Unity/blob/master/Assets/ASTC%20Encoder/CHANGELOG.md",
+  "licensesUrl": "https://github.com/Overflowu/Runtime-ASTC-Encoder-For-Unity/blob/master/Assets/ASTC%20Encoder%20Web/LICENSE.md",
+  "author": {
+    "name": "Overflowu",
+    "url": "https://github.com/Overflowu/Runtime-ASTC-Encoder-For-Unity"
+  },
+  "dependencies": {
+    "com.aperture.astcenc": "2.4.0"
+  }
+}

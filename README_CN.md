@@ -141,7 +141,7 @@ public void UpdateAtlasTile(CommandBuffer cmd, Texture tileSrc, Texture2D astcAt
 | **macOS**（11.0+） | Universal（`arm64` NEON + `x86_64` SSE4.1 + `x86_64h` AVX2） | Metal | Editor & Standalone |
 | **Windows x64** | **AVX2** + **SSE4.1**（运行时自动分派） | D3D11 / D3D12 | 双 DLL 已内置于 `Plugins/x64/`，静态 `/MT` 运行时 |
 | **Linux x64** | SSE4.1（CI 产物 / 本地构建脚本） | Vulkan / OpenGL | 由 GitHub Actions 或 `.github/scripts/build-linux-astcenc.sh` 构建 |
-| **WebGL（WASM）** | Emscripten 静态 WASM（`__Internal`，支持 **WASM SIMD128**）+ **Web Worker 异步池** | 支持 Compute 时可用 | `Plugins/WebGL/` 源码插件由 Unity 自带 Emscripten 自动编译（菜单一键开关 SIMD）；可选非阻塞 Web Worker（`Encoder.InitializeWebWorkerAsync()`），自动探测 SIMD，无需 COOP/COEP |
+| **WebGL / 团结小游戏** *（可选扩展包 `com.aperture.astcenc.web`）* | 静态 WASM（`__Internal`，支持 **SIMD128** 与 **pthreads**）+ **自动打包 Web Worker 池** | GPU 回读兜底桥 | 需 Web 支持时再安装独立扩展包 `Assets/ASTC Encoder Web/`（`?path=/Assets/ASTC%20Encoder%20Web`），支持 `RenderTexture`、非可读纹理、Mipmap 生成、Cubemap/2DArray、图集更新、`DecompressAsync` 与 IDBFS/小游戏持久化缓存；无 Web 需求的项目可不装 |
 | **其他平台** | 平滑降级（`IsCpuSupported == false`） | 支持 Compute 时可用 | 无需原生库即可正常编译 |
 
 ---

@@ -27,7 +27,14 @@ async function loadVariant(scriptName) {
   if (typeof self.createAstcWorkerModule !== 'function') {
     throw new Error('createAstcWorkerModule factory not found in ' + scriptName);
   }
-  return await self.createAstcWorkerModule();
+  const baseUrl = (typeof self.location !== 'undefined' && self.location && self.location.href)
+    ? self.location.href.substring(0, self.location.href.lastIndexOf('/') + 1)
+    : '';
+  return await self.createAstcWorkerModule({
+    locateFile: function (path) {
+      return baseUrl ? (baseUrl + path) : path;
+    }
+  });
 }
 
 async function initWasm() {
@@ -117,6 +124,64 @@ self.onmessage = async function (event) {
       }
 
       // Copy out of WASM heap into a standalone transferable ArrayBuffer
+      const result = new Uint8Array(outLen);
+      result.set(mod.HEAPU8.subarray(outPtr, outPtr + outLen));
+      self.postMessage(
+        { type: 'result', jobId: jobId, status: 0, data: result.buffer },
+        [result.buffer]
+      );
+    } catch (err) {
+      self.postMessage({
+        type: 'result',
+        jobId: jobId,
+        status: -1,
+        data: null,
+        error: String(err && err.message ? err.message : err)
+      });
+    } finally {
+      if (wasmModule) {
+        if (inPtr) wasmModule._free(inPtr);
+        if (outPtr) wasmModule._free(outPtr);
+      }
+    }
+    return;
+  }
+
+  if (msg.type === 'decompress') {
+    const jobId = msg.jobId;
+    let inPtr = 0;
+    let outPtr = 0;
+    try {
+      const mod = await initWasm();
+      const srcBytes = new Uint8Array(msg.astcBuffer);
+      const outLen = msg.expectedOutLen | 0;
+
+      inPtr = mod._malloc(srcBytes.byteLength);
+      outPtr = mod._malloc(outLen);
+      if (!inPtr || !outPtr) {
+        throw new Error('WASM worker OOM allocating ' + srcBytes.byteLength + '+' + outLen + ' bytes');
+      }
+
+      mod.HEAPU8.set(srcBytes, inPtr);
+
+      const status = mod._astcenc_worker_decompress(
+        msg.profile | 0,
+        msg.blockX >>> 0,
+        msg.blockY >>> 0,
+        msg.width >>> 0,
+        msg.height >>> 0,
+        msg.outBitness | 0,
+        inPtr,
+        srcBytes.byteLength >>> 0,
+        outPtr,
+        outLen >>> 0
+      );
+
+      if (status !== 0) {
+        self.postMessage({ type: 'result', jobId: jobId, status: status, data: null });
+        return;
+      }
+
       const result = new Uint8Array(outLen);
       result.set(mod.HEAPU8.subarray(outPtr, outPtr + outLen));
       self.postMessage(

@@ -35,8 +35,10 @@ namespace Aperture.Astcenc.Editor
             string scriptingBackendArg = GetArg(args, "scriptingBackend", string.Empty);
             bool enableE2ESmoke = HasFlag(args, "enableE2ESmoke");
             bool isDevelopment = HasFlag(args, "development");
+            bool webThreads = HasFlag(args, "astcWebThreads")
+                || string.Equals(Environment.GetEnvironmentVariable("ASTC_WEBGL_THREADS"), "1", StringComparison.Ordinal);
 
-            ExecuteBuild(buildTarget, outputPath, buildName, scriptingBackendArg, enableE2ESmoke, isDevelopment);
+            ExecuteBuild(buildTarget, outputPath, buildName, scriptingBackendArg, enableE2ESmoke, isDevelopment, webThreads);
         }
 
         [MenuItem("Build/CI/Android (ARM64 IL2CPP)")]
@@ -72,7 +74,13 @@ namespace Aperture.Astcenc.Editor
         [MenuItem("Build/CI/WebGL (WASM)")]
         public static void BuildWebGLLocal()
         {
-            ExecuteBuild(BuildTarget.WebGL, "build/WebGL", "ASTCEncoder", "IL2CPP", enableE2ESmoke: false, isDevelopment: false);
+            ExecuteBuild(BuildTarget.WebGL, "build/WebGL", "ASTCEncoder", "IL2CPP", enableE2ESmoke: false, isDevelopment: false, webThreads: false);
+        }
+
+        [MenuItem("Build/CI/WebGL (Threads)")]
+        public static void BuildWebGLThreadsLocal()
+        {
+            ExecuteBuild(BuildTarget.WebGL, "build/WebGL-Threads", "ASTCEncoder", "IL2CPP", enableE2ESmoke: false, isDevelopment: false, webThreads: true);
         }
 
         private static void ExecuteBuild(
@@ -81,7 +89,8 @@ namespace Aperture.Astcenc.Editor
             string buildName,
             string scriptingBackendArg,
             bool enableE2ESmoke,
-            bool isDevelopment)
+            bool isDevelopment,
+            bool webThreads = false)
         {
             BuildTargetGroup targetGroup = BuildPipeline.GetBuildTargetGroup(buildTarget);
             string[] scenes = EditorBuildSettings.scenes
@@ -97,6 +106,12 @@ namespace Aperture.Astcenc.Editor
 
             ConfigurePlatformSettings(buildTarget, targetGroup, scriptingBackendArg);
 
+            bool originalWebThreads = PlayerSettings.WebGL.threadsSupport;
+            if (buildTarget == BuildTarget.WebGL)
+            {
+                PlayerSettings.WebGL.threadsSupport = webThreads;
+            }
+
             string originalDefines = PlayerSettings.GetScriptingDefineSymbolsForGroup(targetGroup);
             if (enableE2ESmoke)
             {
@@ -106,7 +121,7 @@ namespace Aperture.Astcenc.Editor
             string locationPath = NormalizeOutputPath(buildTarget, outputPath, buildName);
             EnsureParentDirectory(buildTarget, locationPath);
 
-            Debug.Log($"[CIBuildScript] Building target={buildTarget}, group={targetGroup}, backend={PlayerSettings.GetScriptingBackend(targetGroup)}, e2e={enableE2ESmoke}, output='{locationPath}'");
+            Debug.Log($"[CIBuildScript] Building target={buildTarget}, group={targetGroup}, backend={PlayerSettings.GetScriptingBackend(targetGroup)}, e2e={enableE2ESmoke}, webThreads={webThreads}, output='{locationPath}'");
 
             BuildPlayerOptions options = new BuildPlayerOptions
             {
@@ -134,6 +149,10 @@ namespace Aperture.Astcenc.Editor
                 if (enableE2ESmoke)
                 {
                     PlayerSettings.SetScriptingDefineSymbolsForGroup(targetGroup, originalDefines);
+                }
+                if (buildTarget == BuildTarget.WebGL)
+                {
+                    PlayerSettings.WebGL.threadsSupport = originalWebThreads;
                 }
             }
         }

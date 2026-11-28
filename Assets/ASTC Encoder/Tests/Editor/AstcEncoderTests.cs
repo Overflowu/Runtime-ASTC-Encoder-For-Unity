@@ -341,5 +341,46 @@ namespace Aperture.Astcenc.Tests
             }
             return count > 0 ? degSum / count : 0.0;
         }
+
+        [Test]
+        public void DecompressAsync_RoundTrip_MatchesSync()
+        {
+            if (!Encoder.IsCpuSupported)
+                Assert.Ignore("CPU ASTC encoder not available.");
+
+            Texture2D src = new Texture2D(32, 32, TextureFormat.RGBA32, false, linear: true);
+            try
+            {
+                Color32[] pixels = new Color32[32 * 32];
+                for (int y = 0; y < 32; y++)
+                    for (int x = 0; x < 32; x++)
+                        pixels[y * 32 + x] = new Color32((byte)(x * 8), (byte)(y * 8), (byte)((x ^ y) * 7), 255);
+                src.SetPixels32(pixels);
+                src.Apply(false, false);
+
+                using AstcRaw raw = src.CompressTexture(TextureType.Default, BlockSize.ASTC_6x6, CompressQuality.Fast, backend: EncodeBackend.Cpu);
+                Assert.IsNotNull(raw);
+
+                byte[] syncDecoded = Encoder.Decompress(raw, 32, 32, BlockSize.ASTC_6x6);
+                byte[] asyncDecoded = Encoder.DecompressAsync(raw, 32, 32, BlockSize.ASTC_6x6).GetAwaiter().GetResult();
+
+                Assert.IsNotNull(syncDecoded);
+                Assert.IsNotNull(asyncDecoded);
+                Assert.AreEqual(syncDecoded.Length, asyncDecoded.Length);
+                CollectionAssert.AreEqual(syncDecoded, asyncDecoded);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(src);
+            }
+        }
+
+        [Test]
+        public void CompressionQueue_DefaultConcurrency_And_DiskCacheDefaultDir_AreValid()
+        {
+            using var queue = new AstcCompressionQueue();
+            Assert.GreaterOrEqual(queue.MaxConcurrentCpuTasks, 1);
+            Assert.IsFalse(string.IsNullOrEmpty(AstcDiskCache.DefaultCacheDirectory));
+        }
     }
 }
