@@ -365,9 +365,9 @@ void AstcFitSubsetEndpoints(
     float4 minC = float4(1e9, 1e9, 1e9, 1e9);
     float4 maxC = float4(-1e9, -1e9, -1e9, -1e9);
 
-    for (uint y = 0u; y < BLOCK_Y; ++y)
+    [loop] for (uint y = 0u; y < BLOCK_Y; ++y)
     {
-        for (uint x = 0u; x < BLOCK_X; ++x)
+        [loop] for (uint x = 0u; x < BLOCK_X; ++x)
         {
             if (partFilter < 2u && AstcSelectPartition2(partSeed, x, y, smallBlock) != partFilter)
                 continue;
@@ -401,9 +401,9 @@ void AstcFitSubsetEndpoints(
 
     // Pass 2: MaxAccum principal axis (ARM astcenc style)
     float4 acc0 = 0.0, acc1 = 0.0, acc2 = 0.0, acc3 = 0.0;
-    for (uint y2 = 0u; y2 < BLOCK_Y; ++y2)
+    [loop] for (uint y2 = 0u; y2 < BLOCK_Y; ++y2)
     {
-        for (uint x2 = 0u; x2 < BLOCK_X; ++x2)
+        [loop] for (uint x2 = 0u; x2 < BLOCK_X; ++x2)
         {
             if (partFilter < 2u && AstcSelectPartition2(partSeed, x2, y2, smallBlock) != partFilter)
                 continue;
@@ -442,9 +442,9 @@ void AstcFitSubsetEndpoints(
     // Pass 3: Project onto principal axis for initial [minT, maxT] endpoints
     float minT = 1e9;
     float maxT = -1e9;
-    for (uint y3 = 0u; y3 < BLOCK_Y; ++y3)
+    [loop] for (uint y3 = 0u; y3 < BLOCK_Y; ++y3)
     {
-        for (uint x3 = 0u; x3 < BLOCK_X; ++x3)
+        [loop] for (uint x3 = 0u; x3 < BLOCK_X; ++x3)
         {
             if (partFilter < 2u && AstcSelectPartition2(partSeed, x3, y3, smallBlock) != partFilter)
                 continue;
@@ -462,7 +462,7 @@ void AstcFitSubsetEndpoints(
 
 #if !defined(ASTC_FAST_ONLY)
     // Optional least-squares endpoint refinement with separate RGB (imp) and Alpha (1.0) normal equations
-    for (uint iter = 0u; iter < refineIters; ++iter)
+    [loop] for (uint iter = 0u; iter < refineIters; ++iter)
     {
         float4 dir = (e1 - e0) * mask;
         if (dot(dir, dir) <= 1e-6) break;
@@ -471,9 +471,9 @@ void AstcFitSubsetEndpoints(
         float a00_a   = 0.0, a01_a   = 0.0, a11_a   = 0.0;
         float4 b0 = 0.0, b1 = 0.0;
 
-        for (uint yr = 0u; yr < BLOCK_Y; ++yr)
+        [loop] for (uint yr = 0u; yr < BLOCK_Y; ++yr)
         {
-            for (uint xr = 0u; xr < BLOCK_X; ++xr)
+            [loop] for (uint xr = 0u; xr < BLOCK_X; ++xr)
             {
                 if (partFilter < 2u && AstcSelectPartition2(partSeed, xr, yr, smallBlock) != partFilter)
                     continue;
@@ -544,7 +544,7 @@ void AstcComputeWeightGrid1P(
     uint gridCount = gridW * gridH;
     float num[ASTC_MAX_GRID];
     float den[ASTC_MAX_GRID];
-    for (uint i = 0u; i < ASTC_MAX_GRID_U; ++i)
+    [loop] for (uint i = 0u; i < ASTC_MAX_GRID_U; ++i)
     {
         gridW01[i] = 0.0;
         num[i] = 0.0;
@@ -556,9 +556,9 @@ void AstcComputeWeightGrid1P(
     bool exactGrid = (gridW == BLOCK_X && gridH == BLOCK_Y);
     bool alphaWeightsRgbOnly = (mask.a == 0.0 && effMode == ASTC_EFF_LDR_RGBA && _AstcUseAlphaWeight != 0u);
 
-    for (uint y = 0u; y < BLOCK_Y; ++y)
+    [loop] for (uint y = 0u; y < BLOCK_Y; ++y)
     {
-        for (uint x = 0u; x < BLOCK_X; ++x)
+        [loop] for (uint x = 0u; x < BLOCK_X; ++x)
         {
             float imp;
             float4 p = AstcFetchWorkingPixel(baseX, baseY, x, y, effMode, imp);
@@ -593,7 +593,7 @@ void AstcComputeWeightGrid1P(
 
     if (!exactGrid)
     {
-        for (uint k = 0u; k < gridCount; ++k)
+        [loop] for (uint k = 0u; k < gridCount; ++k)
         {
             gridW01[k] = (den[k] > 1e-6) ? saturate(num[k] / den[k]) : 0.0;
         }
@@ -612,7 +612,7 @@ void AstcComputePlane1WeightGrid(
     uint gridCount = gridW * gridH;
     float num[ASTC_MAX_GRID];
     float den[ASTC_MAX_GRID];
-    for (uint i = 0u; i < ASTC_MAX_GRID_U; ++i)
+    [loop] for (uint i = 0u; i < ASTC_MAX_GRID_U; ++i)
     {
         gridW01[i] = 0.0;
         num[i] = 0.0;
@@ -624,9 +624,9 @@ void AstcComputePlane1WeightGrid(
     bool exactGrid = (gridW == BLOCK_X && gridH == BLOCK_Y);
     bool weightByAlpha = (plane1Channel < 3u && effMode == ASTC_EFF_LDR_RGBA && _AstcUseAlphaWeight != 0u);
 
-    for (uint y = 0u; y < BLOCK_Y; ++y)
+    [loop] for (uint y = 0u; y < BLOCK_Y; ++y)
     {
-        for (uint x = 0u; x < BLOCK_X; ++x)
+        [loop] for (uint x = 0u; x < BLOCK_X; ++x)
         {
             float imp;
             float4 p = AstcFetchWorkingPixel(baseX, baseY, x, y, effMode, imp);
@@ -659,7 +659,7 @@ void AstcComputePlane1WeightGrid(
 
     if (!exactGrid)
     {
-        for (uint k = 0u; k < gridCount; ++k)
+        [loop] for (uint k = 0u; k < gridCount; ++k)
         {
             gridW01[k] = (den[k] > 1e-6) ? saturate(num[k] / den[k]) : 0.0;
         }
@@ -681,7 +681,7 @@ void AstcComputeWeightGrid2P(
     uint gridCount = gridW * gridH;
     float num[ASTC_MAX_GRID];
     float den[ASTC_MAX_GRID];
-    for (uint i = 0u; i < ASTC_MAX_GRID_U; ++i)
+    [loop] for (uint i = 0u; i < ASTC_MAX_GRID_U; ++i)
     {
         gridW01[i] = 0.0;
         num[i] = 0.0;
@@ -696,9 +696,9 @@ void AstcComputeWeightGrid2P(
     bool smallBlock = (BLOCK_X * BLOCK_Y) < 32u;
     AstcPart2Params p2 = AstcPreparePartition2(partSeed, smallBlock);
 
-    for (uint y = 0u; y < BLOCK_Y; ++y)
+    [loop] for (uint y = 0u; y < BLOCK_Y; ++y)
     {
-        for (uint x = 0u; x < BLOCK_X; ++x)
+        [loop] for (uint x = 0u; x < BLOCK_X; ++x)
         {
             float imp;
             float4 p = AstcFetchWorkingPixel(baseX, baseY, x, y, effMode, imp);
@@ -743,7 +743,7 @@ void AstcComputeWeightGrid2P(
 
     if (!exactGrid)
     {
-        for (uint k = 0u; k < gridCount; ++k)
+        [loop] for (uint k = 0u; k < gridCount; ++k)
         {
             gridW01[k] = (den[k] > 1e-6) ? saturate(num[k] / den[k]) : 0.0;
         }
@@ -762,14 +762,14 @@ float AstcEvalError1PWithGrid(
     out float4 outChanErr)
 {
     uint epCodes[16];
-    for (uint e = 0u; e < 16u; ++e) epCodes[e] = 0u;
+    [loop] for (uint e = 0u; e < 16u; ++e) epCodes[e] = 0u;
     float4 uqE0, uqE1;
     AstcQuantizeEndpoints(e0, e1, effMode, epQuant, epCodes, 0u, uqE0, uqE1);
 
     uint gridUq[ASTC_MAX_GRID];
     uint gridCount = gridW * gridH;
-    for (uint i = 0u; i < ASTC_MAX_GRID_U; ++i) gridUq[i] = 0u;
-    for (uint k = 0u; k < gridCount; ++k)
+    [loop] for (uint i = 0u; i < ASTC_MAX_GRID_U; ++i) gridUq[i] = 0u;
+    [loop] for (uint k = 0u; k < gridCount; ++k)
     {
         uint uqW;
         AstcQuantizeWeight(gridW01[k], wQuant, uqW);
@@ -779,9 +779,9 @@ float AstcEvalError1PWithGrid(
     float4 mask = AstcChannelMaskEx(effMode, 4u);
     float totalErr = 0.0;
     outChanErr = 0.0;
-    for (uint y = 0u; y < BLOCK_Y; ++y)
+    [loop] for (uint y = 0u; y < BLOCK_Y; ++y)
     {
-        for (uint x = 0u; x < BLOCK_X; ++x)
+        [loop] for (uint x = 0u; x < BLOCK_X; ++x)
         {
             float imp;
             float4 p = AstcFetchWorkingPixel(baseX, baseY, x, y, effMode, imp);
@@ -813,15 +813,15 @@ float AstcEvalErrorDualPlaneWithGrid(
     float bestError)
 {
     uint epCodes[16];
-    for (uint e = 0u; e < 16u; ++e) epCodes[e] = 0u;
+    [loop] for (uint e = 0u; e < 16u; ++e) epCodes[e] = 0u;
     float4 uqE0, uqE1;
     AstcQuantizeEndpoints(e0, e1, effMode, epQuant, epCodes, 0u, uqE0, uqE1);
 
     uint grid0Uq[ASTC_MAX_GRID];
     uint grid1Uq[ASTC_MAX_GRID];
     uint gridCount = gridW * gridH;
-    for (uint i = 0u; i < ASTC_MAX_GRID_U; ++i) { grid0Uq[i] = 0u; grid1Uq[i] = 0u; }
-    for (uint k = 0u; k < gridCount; ++k)
+    [loop] for (uint i = 0u; i < ASTC_MAX_GRID_U; ++i) { grid0Uq[i] = 0u; grid1Uq[i] = 0u; }
+    [loop] for (uint k = 0u; k < gridCount; ++k)
     {
         uint uq0, uq1;
         AstcQuantizeWeight(grid0W01[k], wQuant, uq0);
@@ -832,9 +832,9 @@ float AstcEvalErrorDualPlaneWithGrid(
 
     float4 mask = AstcChannelMaskEx(effMode, 4u);
     float totalErr = 0.0;
-    for (uint y = 0u; y < BLOCK_Y; ++y)
+    [loop] for (uint y = 0u; y < BLOCK_Y; ++y)
     {
-        for (uint x = 0u; x < BLOCK_X; ++x)
+        [loop] for (uint x = 0u; x < BLOCK_X; ++x)
         {
             float imp;
             float4 p = AstcFetchWorkingPixel(baseX, baseY, x, y, effMode, imp);
@@ -886,7 +886,7 @@ float AstcEvalError2PWithGrid(
     float bestError)
 {
     uint epCodes[16];
-    for (uint e = 0u; e < 16u; ++e) epCodes[e] = 0u;
+    [loop] for (uint e = 0u; e < 16u; ++e) epCodes[e] = 0u;
     uint epPerPart = AstcGetEpCountForEffMode(effMode);
     float4 uq0_p0, uq1_p0, uq0_p1, uq1_p1;
     AstcQuantizeEndpoints(e0_p0, e1_p0, effMode, epQuant, epCodes, 0u, uq0_p0, uq1_p0);
@@ -894,8 +894,8 @@ float AstcEvalError2PWithGrid(
 
     uint gridUq[ASTC_MAX_GRID];
     uint gridCount = gridW * gridH;
-    for (uint i = 0u; i < ASTC_MAX_GRID_U; ++i) gridUq[i] = 0u;
-    for (uint k = 0u; k < gridCount; ++k)
+    [loop] for (uint i = 0u; i < ASTC_MAX_GRID_U; ++i) gridUq[i] = 0u;
+    [loop] for (uint k = 0u; k < gridCount; ++k)
     {
         uint uqW;
         AstcQuantizeWeight(gridW01[k], wQuant, uqW);
@@ -904,9 +904,9 @@ float AstcEvalError2PWithGrid(
 
     float4 mask = AstcChannelMaskEx(effMode, 4u);
     float totalErr = 0.0;
-    for (uint y = 0u; y < BLOCK_Y; ++y)
+    [loop] for (uint y = 0u; y < BLOCK_Y; ++y)
     {
-        for (uint x = 0u; x < BLOCK_X; ++x)
+        [loop] for (uint x = 0u; x < BLOCK_X; ++x)
         {
             float imp;
             float4 p = AstcFetchWorkingPixel(baseX, baseY, x, y, effMode, imp);
@@ -945,9 +945,9 @@ void AstcFitBothPartitions2P(
     float4 wSum0 = 0.0, wSum1 = 0.0;
 
     // Pass 1: means for both partitions
-    for (uint y = 0u; y < BLOCK_Y; ++y)
+    [loop] for (uint y = 0u; y < BLOCK_Y; ++y)
     {
-        for (uint x = 0u; x < BLOCK_X; ++x)
+        [loop] for (uint x = 0u; x < BLOCK_X; ++x)
         {
             float imp;
             float4 p = AstcFetchWorkingPixel(baseX, baseY, x, y, effMode, imp);
@@ -971,9 +971,9 @@ void AstcFitBothPartitions2P(
     // Pass 2: covariance + principal axis via power iteration seed for both partitions
     float4 cov0R = 0.0, cov0G = 0.0, cov0B = 0.0, cov0A = 0.0;
     float4 cov1R = 0.0, cov1G = 0.0, cov1B = 0.0, cov1A = 0.0;
-    for (uint y2 = 0u; y2 < BLOCK_Y; ++y2)
+    [loop] for (uint y2 = 0u; y2 < BLOCK_Y; ++y2)
     {
-        for (uint x2 = 0u; x2 < BLOCK_X; ++x2)
+        [loop] for (uint x2 = 0u; x2 < BLOCK_X; ++x2)
         {
             float imp;
             float4 p = AstcFetchWorkingPixel(baseX, baseY, x2, y2, effMode, imp);
@@ -995,7 +995,7 @@ void AstcFitBothPartitions2P(
 
     float4 axis0 = float4(cov0R.r, cov0G.g, cov0B.b, cov0A.a);
     float4 axis1 = float4(cov1R.r, cov1G.g, cov1B.b, cov1A.a);
-    for (uint it = 0u; it < 3u; ++it)
+    [loop] for (uint it = 0u; it < 3u; ++it)
     {
         float4 n0 = float4(dot(cov0R, axis0), dot(cov0G, axis0), dot(cov0B, axis0), dot(cov0A, axis0)) * mask;
         float l0 = length(n0);
@@ -1013,9 +1013,9 @@ void AstcFitBothPartitions2P(
     // Pass 3: min/max projection along each partition's principal axis
     float minT0 = 1e30, maxT0 = -1e30;
     float minT1 = 1e30, maxT1 = -1e30;
-    for (uint y3 = 0u; y3 < BLOCK_Y; ++y3)
+    [loop] for (uint y3 = 0u; y3 < BLOCK_Y; ++y3)
     {
-        for (uint x3 = 0u; x3 < BLOCK_X; ++x3)
+        [loop] for (uint x3 = 0u; x3 < BLOCK_X; ++x3)
         {
             float imp;
             float4 p = AstcFetchWorkingPixel(baseX, baseY, x3, y3, effMode, imp);
@@ -1061,9 +1061,9 @@ void AstcRefitEndpoints1P(
     float a00_a   = 0.0, a01_a   = 0.0, a11_a   = 0.0;
     float4 b0 = 0.0, b1 = 0.0;
 
-    for (uint y = 0u; y < BLOCK_Y; ++y)
+    [loop] for (uint y = 0u; y < BLOCK_Y; ++y)
     {
-        for (uint x = 0u; x < BLOCK_X; ++x)
+        [loop] for (uint x = 0u; x < BLOCK_X; ++x)
         {
             float imp;
             float4 p = AstcFetchWorkingPixel(baseX, baseY, x, y, effMode, imp);
@@ -1116,14 +1116,14 @@ void AstcRefitEndpoints1P(
     if (!changed) return;
 
     uint candCodes[16];
-    for (uint e = 0u; e < 16u; ++e) candCodes[e] = 0u;
+    [loop] for (uint e = 0u; e < 16u; ++e) candCodes[e] = 0u;
     float4 uq0, uq1;
     AstcQuantizeEndpoints(refitE0, refitE1, effMode, epQuant, candCodes, 0u, uq0, uq1);
 
     float refitErr = 0.0;
-    for (uint y2 = 0u; y2 < BLOCK_Y; ++y2)
+    [loop] for (uint y2 = 0u; y2 < BLOCK_Y; ++y2)
     {
-        for (uint x2 = 0u; x2 < BLOCK_X; ++x2)
+        [loop] for (uint x2 = 0u; x2 < BLOCK_X; ++x2)
         {
             float imp;
             float4 p = AstcFetchWorkingPixel(baseX, baseY, x2, y2, effMode, imp);
@@ -1138,7 +1138,7 @@ void AstcRefitEndpoints1P(
 
     if (refitErr < origErr)
     {
-        for (uint ei = 0u; ei < 8u; ++ei) epCodes[ei] = candCodes[ei];
+        [loop] for (uint ei = 0u; ei < 8u; ++ei) epCodes[ei] = candCodes[ei];
     }
 }
 
@@ -1163,9 +1163,9 @@ void AstcRefitEndpointsDualPlane(
     float4 b0_p0 = 0.0, b1_p0 = 0.0;
     float b0_p1 = 0.0, b1_p1 = 0.0;
 
-    for (uint y = 0u; y < BLOCK_Y; ++y)
+    [loop] for (uint y = 0u; y < BLOCK_Y; ++y)
     {
-        for (uint x = 0u; x < BLOCK_X; ++x)
+        [loop] for (uint x = 0u; x < BLOCK_X; ++x)
         {
             float imp;
             float4 p = AstcFetchWorkingPixel(baseX, baseY, x, y, effMode, imp);
@@ -1254,14 +1254,14 @@ void AstcRefitEndpointsDualPlane(
     if (!changed) return;
 
     uint candCodes[16];
-    for (uint e = 0u; e < 16u; ++e) candCodes[e] = 0u;
+    [loop] for (uint e = 0u; e < 16u; ++e) candCodes[e] = 0u;
     float4 uq0, uq1;
     AstcQuantizeEndpoints(refitE0, refitE1, effMode, epQuant, candCodes, 0u, uq0, uq1);
 
     float refitErr = 0.0;
-    for (uint y2 = 0u; y2 < BLOCK_Y; ++y2)
+    [loop] for (uint y2 = 0u; y2 < BLOCK_Y; ++y2)
     {
-        for (uint x2 = 0u; x2 < BLOCK_X; ++x2)
+        [loop] for (uint x2 = 0u; x2 < BLOCK_X; ++x2)
         {
             float imp;
             float4 p = AstcFetchWorkingPixel(baseX, baseY, x2, y2, effMode, imp);
@@ -1290,7 +1290,7 @@ void AstcRefitEndpointsDualPlane(
 
     if (refitErr < origErr)
     {
-        for (uint ei = 0u; ei < 8u; ++ei) epCodes[ei] = candCodes[ei];
+        [loop] for (uint ei = 0u; ei < 8u; ++ei) epCodes[ei] = candCodes[ei];
     }
 }
 
@@ -1300,12 +1300,12 @@ void AstcRefitEndpointsDualPlane(
 uint4 AstcAssembleBlock(uint baseX, uint baseY, uint effMode, AstcCandidate c)
 {
     uint epCodes[16];
-    for (uint e = 0u; e < 16u; ++e) epCodes[e] = 0u;
+    [loop] for (uint e = 0u; e < 16u; ++e) epCodes[e] = 0u;
 
     uint epPerPart = AstcGetEpCountForEffMode(effMode);
     uint cem = AstcGetCemForEffMode(effMode);
     uint wCodes[64];
-    for (uint wi = 0u; wi < 64u; ++wi) wCodes[wi] = 0u;
+    [loop] for (uint wi = 0u; wi < 64u; ++wi) wCodes[wi] = 0u;
 
     uint gridCount = c.gridW * c.gridH;
     uint totalWeights = gridCount;
@@ -1319,7 +1319,7 @@ uint4 AstcAssembleBlock(uint baseX, uint baseY, uint effMode, AstcCandidate c)
 
         float gridW01[ASTC_MAX_GRID];
         AstcComputeWeightGrid2P(baseX, baseY, effMode, c.partSeed, uq0_p0, uq1_p0, uq0_p1, uq1_p1, c.gridW, c.gridH, gridW01);
-        for (uint k = 0u; k < gridCount; ++k)
+        [loop] for (uint k = 0u; k < gridCount; ++k)
         {
             uint dummyUq;
             wCodes[k] = AstcQuantizeWeight(gridW01[k], c.wQuant, dummyUq);
@@ -1340,9 +1340,9 @@ uint4 AstcAssembleBlock(uint baseX, uint baseY, uint effMode, AstcCandidate c)
 #if !defined(ASTC_FAST_ONLY)
         uint grid0Uq[ASTC_MAX_GRID];
         uint grid1Uq[ASTC_MAX_GRID];
-        for (uint zi = 0u; zi < ASTC_MAX_GRID_U; ++zi) { grid0Uq[zi] = 0u; grid1Uq[zi] = 0u; }
+        [loop] for (uint zi = 0u; zi < ASTC_MAX_GRID_U; ++zi) { grid0Uq[zi] = 0u; grid1Uq[zi] = 0u; }
 #endif
-        for (uint k = 0u; k < gridCount; ++k)
+        [loop] for (uint k = 0u; k < gridCount; ++k)
         {
             uint uq0, uq1;
             wCodes[2u * k]      = AstcQuantizeWeight(grid0W01[k], c.wQuant, uq0);
@@ -1371,9 +1371,9 @@ uint4 AstcAssembleBlock(uint baseX, uint baseY, uint effMode, AstcCandidate c)
 
 #if !defined(ASTC_FAST_ONLY)
         uint gridUq[ASTC_MAX_GRID];
-        for (uint zi = 0u; zi < ASTC_MAX_GRID_U; ++zi) gridUq[zi] = 0u;
+        [loop] for (uint zi = 0u; zi < ASTC_MAX_GRID_U; ++zi) gridUq[zi] = 0u;
 #endif
-        for (uint k = 0u; k < gridCount; ++k)
+        [loop] for (uint k = 0u; k < gridCount; ++k)
         {
             uint uqW;
             wCodes[k] = AstcQuantizeWeight(gridW01[k], c.wQuant, uqW);
@@ -1543,7 +1543,7 @@ uint AstcSelectBestSeed2P(uint baseX, uint baseY, uint effMode)
     uint bestSeed = 17u;
     float bestScore = -1.0;
 
-    for (uint batch = 0u; batch < 16u; batch += 4u)
+    [loop] for (uint batch = 0u; batch < 16u; batch += 4u)
     {
         uint seed0 = AstcGetCuratedSeed(batch + 0u);
         uint seed1 = AstcGetCuratedSeed(batch + 1u);
@@ -1561,9 +1561,9 @@ uint AstcSelectBestSeed2P(uint baseX, uint baseY, uint effMode)
         float4 s1_0 = 0.0, s1_1 = 0.0, s1_2 = 0.0, s1_3 = 0.0;
         float4 c1_0 = 0.0, c1_1 = 0.0, c1_2 = 0.0, c1_3 = 0.0;
 
-        for (uint y = 0u; y < BLOCK_Y; ++y)
+        [loop] for (uint y = 0u; y < BLOCK_Y; ++y)
         {
-            for (uint x = 0u; x < BLOCK_X; ++x)
+            [loop] for (uint x = 0u; x < BLOCK_X; ++x)
             {
                 float imp;
                 float4 p = AstcFetchWorkingPixel(baseX, baseY, x, y, effMode, imp);
@@ -1636,9 +1636,9 @@ uint4 AstcEncodeBlock(uint blockXIdx, uint blockYIdx)
     float4 rawMax = float4(-1e30, -1e30, -1e30, -1e30);
     float4 rawFirst = 0.0;
 
-    for (uint y = 0u; y < BLOCK_Y; ++y)
+    [loop] for (uint y = 0u; y < BLOCK_Y; ++y)
     {
-        for (uint x = 0u; x < BLOCK_X; ++x)
+        [loop] for (uint x = 0u; x < BLOCK_X; ++x)
         {
             uint px = min(baseX + x, _AstcSrcWidth - 1u);
             uint py = min(baseY + y, _AstcSrcHeight - 1u);
@@ -1831,8 +1831,8 @@ uint4 AstcEncodeBlock(uint blockXIdx, uint blockYIdx)
         uint normCachedG = 0u;
         float normGrid0[ASTC_MAX_GRID];
         float normGrid1[ASTC_MAX_GRID];
-        for (uint zn = 0u; zn < ASTC_MAX_GRID_U; ++zn) { normGrid0[zn] = 0.0; normGrid1[zn] = 0.0; }
-        for (uint ni = 0u; ni < normCandCount; ++ni)
+        [loop] for (uint zn = 0u; zn < ASTC_MAX_GRID_U; ++zn) { normGrid0[zn] = 0.0; normGrid1[zn] = 0.0; }
+        [loop] for (uint ni = 0u; ni < normCandCount; ++ni)
         {
             uint4 cfg = (ni == 0u) ? uint4(0x452u, 4u, ASTC_QUANT_5, ASTC_QUANT_256)
                       : (ni == 1u) ? uint4(0x442u, 4u, ASTC_QUANT_4, ASTC_QUANT_256)
@@ -1939,10 +1939,10 @@ uint4 AstcEncodeBlock(uint blockXIdx, uint blockYIdx)
 
     uint cachedGW = 0u, cachedGH = 0u;
     float cachedGrid1P[ASTC_MAX_GRID];
-    for (uint z1 = 0u; z1 < ASTC_MAX_GRID_U; ++z1) cachedGrid1P[z1] = 0.0;
+    [loop] for (uint z1 = 0u; z1 < ASTC_MAX_GRID_U; ++z1) cachedGrid1P[z1] = 0.0;
     float4 bestChanErr = 0.0;
 
-    for (uint c1 = 0u; c1 < cand1PCount; ++c1)
+    [loop] for (uint c1 = 0u; c1 < cand1PCount; ++c1)
     {
         uint bm, gw, gh, wQ, epQ;
         if (!hasAlpha)
@@ -1998,8 +1998,8 @@ uint4 AstcEncodeBlock(uint blockXIdx, uint blockYIdx)
         uint dpCachedG = 0u;
         float dpGrid0[ASTC_MAX_GRID];
         float dpGrid1[ASTC_MAX_GRID];
-        for (uint zd = 0u; zd < ASTC_MAX_GRID_U; ++zd) { dpGrid0[zd] = 0.0; dpGrid1[zd] = 0.0; }
-        for (uint di = 0u; di < dpCount; ++di)
+        [loop] for (uint zd = 0u; zd < ASTC_MAX_GRID_U; ++zd) { dpGrid0[zd] = 0.0; dpGrid1[zd] = 0.0; }
+        [loop] for (uint di = 0u; di < dpCount; ++di)
         {
             uint4 cfg;
             if (!hasAlpha)
@@ -2042,8 +2042,8 @@ uint4 AstcEncodeBlock(uint blockXIdx, uint blockYIdx)
 #endif
         uint p2CachedG = 0u;
         float p2Grid[ASTC_MAX_GRID];
-        for (uint z2 = 0u; z2 < ASTC_MAX_GRID_U; ++z2) p2Grid[z2] = 0.0;
-        for (uint p2 = 0u; p2 < p2Count; ++p2)
+        [loop] for (uint z2 = 0u; z2 < ASTC_MAX_GRID_U; ++z2) p2Grid[z2] = 0.0;
+        [loop] for (uint p2 = 0u; p2 < p2Count; ++p2)
         {
             uint4 cfg;
             if (!hasAlpha)

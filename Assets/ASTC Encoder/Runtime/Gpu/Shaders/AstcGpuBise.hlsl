@@ -406,7 +406,7 @@ void AstcEncodeBise64(inout uint4 dst, uint startBit, uint q, uint count, uint v
 
     if (t == 0u && qu == 0u)
     {
-        for (uint i = 0u; i < count; ++i)
+        [loop] for (uint i = 0u; i < count; ++i)
         {
             AstcWriteBits128(dst, bitPos, b, vals[i]);
             bitPos += b;
@@ -415,7 +415,7 @@ void AstcEncodeBise64(inout uint4 dst, uint startBit, uint q, uint count, uint v
     else if (t != 0u)
     {
         uint lowMask = (b > 0u) ? ((1u << b) - 1u) : 0u;
-        for (uint i = 0u; i < count; i += 5u)
+        [loop] for (uint i = 0u; i < count; i += 5u)
         {
             uint v0 = vals[i];
             uint v1 = (i + 1u < count) ? vals[i + 1u] : 0u;
@@ -453,7 +453,7 @@ void AstcEncodeBise64(inout uint4 dst, uint startBit, uint q, uint count, uint v
     else
     {
         uint lowMask = (b > 0u) ? ((1u << b) - 1u) : 0u;
-        for (uint i = 0u; i < count; i += 3u)
+        [loop] for (uint i = 0u; i < count; i += 3u)
         {
             uint v0 = vals[i];
             uint v1 = (i + 1u < count) ? vals[i + 1u] : 0u;
@@ -487,7 +487,7 @@ void AstcEncodeBise16(inout uint4 dst, uint startBit, uint q, uint count, uint v
 
     if (t == 0u && qu == 0u)
     {
-        for (uint i = 0u; i < count; ++i)
+        [loop] for (uint i = 0u; i < count; ++i)
         {
             AstcWriteBits128(dst, bitPos, b, vals[i]);
             bitPos += b;
@@ -496,7 +496,7 @@ void AstcEncodeBise16(inout uint4 dst, uint startBit, uint q, uint count, uint v
     else if (t != 0u)
     {
         uint lowMask = (b > 0u) ? ((1u << b) - 1u) : 0u;
-        for (uint i = 0u; i < count; i += 5u)
+        [loop] for (uint i = 0u; i < count; i += 5u)
         {
             uint v0 = vals[i];
             uint v1 = (i + 1u < count) ? vals[i + 1u] : 0u;
@@ -534,7 +534,7 @@ void AstcEncodeBise16(inout uint4 dst, uint startBit, uint q, uint count, uint v
     else
     {
         uint lowMask = (b > 0u) ? ((1u << b) - 1u) : 0u;
-        for (uint i = 0u; i < count; i += 3u)
+        [loop] for (uint i = 0u; i < count; i += 3u)
         {
             uint v0 = vals[i];
             uint v1 = (i + 1u < count) ? vals[i + 1u] : 0u;
