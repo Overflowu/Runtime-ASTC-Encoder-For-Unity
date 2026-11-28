@@ -44,8 +44,10 @@ A production-ready **runtime ASTC texture compression package** for Unity (`com.
 In Unity, open **Window → Package Manager → `+` → Add package from git URL...**:
 
 ```text
-https://github.com/Overflowu/Runtime-ASTC-Encoder-For-Unity.git?path=/Assets/ASTC%20Encoder
+https://github.com/Overflowu/Runtime-ASTC-Encoder-For-Unity.git?path=/Assets/ASTC%20Encoder#v2.3.0
 ```
+
+*(Omit `#v2.3.0` to track the latest `master` branch.)*
 
 ### Option 2: Local Clone / Direct Copy
 

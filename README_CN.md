@@ -44,8 +44,10 @@
 在 Unity 中打开 **Window → Package Manager → `+` → Add package from git URL...**：
 
 ```text
-https://github.com/Overflowu/Runtime-ASTC-Encoder-For-Unity.git?path=/Assets/ASTC%20Encoder
+https://github.com/Overflowu/Runtime-ASTC-Encoder-For-Unity.git?path=/Assets/ASTC%20Encoder#v2.3.0
 ```
+
+*（去掉 `#v2.3.0` 可直接跟踪 `master` 分支最新提交。）*
 
 ### 方式二：本地克隆 / 直接拷贝
 

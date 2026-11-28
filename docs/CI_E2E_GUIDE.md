@@ -1,6 +1,6 @@
 # 多平台 Unity 构建与端到端测试指南（GitHub Actions + GameCI）
 
-本项目在 `develop` 分支配置了基于 **GitHub Actions + GameCI** 的自动化测试与多平台端到端构建流水线（[`.github/workflows/unity-multiplatform-e2e.yml`](../.github/workflows/unity-multiplatform-e2e.yml)），覆盖：
+本项目在 `master` 与 `develop` 分支配置了基于 **GitHub Actions + GameCI** 的自动化测试与多平台端到端构建流水线（[`.github/workflows/unity-multiplatform-e2e.yml`](../.github/workflows/unity-multiplatform-e2e.yml)），覆盖：
 
 | 阶段 / 平台 | 运行环境 | 验证内容 |
 | :--- | :--- | :--- |
@@ -28,5 +28,5 @@
 
 ## 二、触发方式
 
-- **自动触发**：向 `develop` 分支推送代码或向 `develop` 提交 Pull Request 时自动运行。
+- **自动触发**：向 `master` 或 `develop` 分支推送代码，或向这两个分支提交 Pull Request 时自动运行。
 - **手动触发**：在 **Actions → Unity Multi-Platform Build & E2E Tests → Run workflow** 中触发，可自定义 `unity_version`（默认 `2021.3.6f1`）和 `run_android_emulator`。

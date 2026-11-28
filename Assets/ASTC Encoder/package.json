@@ -6,6 +6,13 @@
   "keywords": ["Texture", "ASTC", "Runtime", "astcenc", "GPU", "ComputeShader", "KTX"],
   "description": "High-performance runtime ASTC texture compression (GPU Compute + native ARM astc-encoder CPU), GPU mipmap generation, KTX v1 disk caching, and Editor benchmarking for Unity.",
   "license": "MIT",
+  "documentationUrl": "https://github.com/Overflowu/Runtime-ASTC-Encoder-For-Unity/blob/master/docs/API.md",
+  "changelogUrl": "https://github.com/Overflowu/Runtime-ASTC-Encoder-For-Unity/blob/master/Assets/ASTC%20Encoder/CHANGELOG.md",
+  "licensesUrl": "https://github.com/Overflowu/Runtime-ASTC-Encoder-For-Unity/blob/master/Assets/ASTC%20Encoder/LICENSE.md",
+  "author": {
+    "name": "Overflowu",
+    "url": "https://github.com/Overflowu/Runtime-ASTC-Encoder-For-Unity"
+  },
   "dependencies": {
   }
 }

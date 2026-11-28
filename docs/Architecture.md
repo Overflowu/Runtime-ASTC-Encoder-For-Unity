@@ -63,11 +63,13 @@ Located under `Assets/ASTC Encoder/Runtime/Cpu/` and `Runtime/NativeAPI/`:
 
 ---
 
-## Automated Cross-Platform Native Builds (GitHub Actions)
+## Automated Builds, Verification & Benchmarks (GitHub Actions)
 
-The repository includes two CI workflows under `.github/workflows/`:
+The repository includes four CI workflows under `.github/workflows/`:
 
-1. **`verify-shaders-and-code.yml`**: Validates HLSL/Compute shader syntax and verifies Unity `.meta` file completeness and GUID uniqueness on every push/PR.
+1. **`verify-shaders-and-code.yml`**: Validates HLSL/Compute shader syntax across all block sizes and verifies Unity `.meta` file completeness and GUID uniqueness on every push/PR to `master` and `develop`.
 2. **`build-native-plugins.yml`**: Builds all native `astc-encoder` binaries from `ThirdParty/astc-encoder` (Windows x64 AVX2 + SSE4.1, macOS Universal, iOS ARM64 + `astcenc.xcframework`, Android `arm64-v8a` / `armeabi-v7a` with symbol stripping and 16 KB page alignment, Linux x64 SSE4.1) and verifies exported symbols.
-   - Triggering manually with `commit_binaries` enabled commits updated binaries directly into `Assets/ASTC Encoder/Plugins/` via Git LFS.
+   - Triggering manually with `commit_binaries` enabled commits updated binaries (including Linux `.meta` files) directly into `Assets/ASTC Encoder/Plugins/` via Git LFS.
    - When upgrading `ThirdParty/astc-encoder`, verify struct layouts and signatures in `Runtime/NativeAPI/` against `ThirdParty/astc-encoder/Source/astcenc.h`.
+3. **`unity-multiplatform-e2e.yml`**: Runs Unity EditMode tests (`Aperture.Astcenc.Tests`) and builds/executes end-to-end smoke tests across Linux x64, Windows x64, macOS Universal, Android ARM64 (emulator), and iOS ARM64 (Xcode build & link) on pushes/PRs to `master` and `develop`.
+4. **`performance-benchmarks.yml`**: Manually dispatched workflow (`workflow_dispatch`) that runs cross-platform native CPU SIMD benchmarks and Unity Standalone Player GPU/CPU benchmarks, optionally syncing results into `README.md`, `README_CN.md`, `docs/Benchmarks.md`, and `docs/benchmarks/baseline.json`.
