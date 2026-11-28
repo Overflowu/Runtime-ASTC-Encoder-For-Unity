@@ -723,14 +723,35 @@ namespace Aperture.Astcenc.Runtime
                 return Task.FromResult<AstcRaw>(null);
             }
 
-            return Task.Run(() =>
+            return RunCpuTask(() =>
             {
                 using (snapshot)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     return CompressCompactSnapshot(context, swizzle, snapshot, cancellationToken);
                 }
-            });
+            }, cancellationToken);
+        }
+
+        private static Task<AstcRaw> RunCpuTask(Func<AstcRaw> work, CancellationToken cancellationToken)
+        {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            try
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return Task.FromResult(work());
+            }
+            catch (OperationCanceledException)
+            {
+                return Task.FromCanceled<AstcRaw>(cancellationToken.IsCancellationRequested ? cancellationToken : new CancellationToken(true));
+            }
+            catch (Exception ex)
+            {
+                return Task.FromException<AstcRaw>(ex);
+            }
+#else
+            return Task.Run(work, cancellationToken);
+#endif
         }
 
         internal static AstcRaw CompressTextureSync(
@@ -830,7 +851,7 @@ namespace Aperture.Astcenc.Runtime
                 return Task.FromResult<AstcRaw>(null);
             }
 
-            return Task.Run(() =>
+            return RunCpuTask(() =>
             {
                 using (snapshot)
                 {
@@ -851,7 +872,7 @@ namespace Aperture.Astcenc.Runtime
 
                     return CompressCompactSnapshot(lease.Context, swizzle, snapshot, cancellationToken);
                 }
-            });
+            }, cancellationToken);
         }
 
         internal static Texture2D CompressToTexture(
@@ -1348,7 +1369,7 @@ namespace Aperture.Astcenc.Runtime
                 MipCount = 1,
             };
 
-            return Task.Run(() =>
+            return RunCpuTask(() =>
             {
                 using (snapshot)
                 {

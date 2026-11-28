@@ -189,7 +189,8 @@ namespace Aperture.Astcenc.Runtime
             uint alphaScaleRadius,
             bool useUnityJobSystem = false)
         {
-            var key = new CompressorKey(format, textureType, blockSize, quality, threadCount, useAlphaWeight, usePerceptual, alphaScaleRadius);
+            int resolvedThreads = AstcContext.ResolveThreadCount(threadCount);
+            var key = new CompressorKey(format, textureType, blockSize, quality, resolvedThreads, useAlphaWeight, usePerceptual, alphaScaleRadius);
             var parentKey = new CompressorKey(format, textureType, blockSize, quality, 1, useAlphaWeight, usePerceptual, alphaScaleRadius);
             lock (s_Lock)
             {
@@ -214,7 +215,7 @@ namespace Aperture.Astcenc.Runtime
                     textureType,
                     blockSize,
                     quality,
-                    threadCount,
+                    resolvedThreads,
                     useAlphaWeight,
                     usePerceptual,
                     alphaScaleRadius,
@@ -228,7 +229,8 @@ namespace Aperture.Astcenc.Runtime
 
         internal static DecompressorLease RentDecompressor(BlockSize blockSize, bool srgb, bool isHdr, int threadCount)
         {
-            var key = new DecompressorKey(blockSize, srgb, isHdr, threadCount);
+            int resolvedThreads = AstcContext.ResolveThreadCount(threadCount);
+            var key = new DecompressorKey(blockSize, srgb, isHdr, resolvedThreads);
             lock (s_Lock)
             {
                 int gen = s_Generation;
@@ -237,7 +239,7 @@ namespace Aperture.Astcenc.Runtime
                     return new DecompressorLease(key, stack.Pop(), gen);
                 }
 
-                AstcContext created = AstcContext.CreateDecompressor(blockSize, srgb, isHdr, threadCount);
+                AstcContext created = AstcContext.CreateDecompressor(blockSize, srgb, isHdr, resolvedThreads);
                 return new DecompressorLease(key, created, gen);
             }
         }

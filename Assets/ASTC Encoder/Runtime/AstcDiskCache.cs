@@ -44,7 +44,12 @@ namespace Aperture.Astcenc.Runtime
 
             try
             {
+                cancellationToken.ThrowIfCancellationRequested();
+#if UNITY_WEBGL && !UNITY_EDITOR
+                byte[] bytes = File.ReadAllBytes(cachePath);
+#else
                 byte[] bytes = await Task.Run(() => File.ReadAllBytes(cachePath), cancellationToken);
+#endif
                 cancellationToken.ThrowIfCancellationRequested();
                 return AstcKtxContainer.LoadTexture(bytes, makeNoLongerReadable, textureName);
             }
@@ -154,45 +159,63 @@ namespace Aperture.Astcenc.Runtime
 
         private static Task WriteFileAtomicAsync(string path, byte[] data, CancellationToken cancellationToken)
         {
-            return Task.Run(() =>
+#if UNITY_WEBGL && !UNITY_EDITOR
+            try
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                string dir = Path.GetDirectoryName(path);
-                if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
-                {
-                    Directory.CreateDirectory(dir);
-                }
+                WriteFileAtomic(path, data, cancellationToken);
+                return Task.CompletedTask;
+            }
+            catch (OperationCanceledException)
+            {
+                return Task.FromCanceled(cancellationToken.IsCancellationRequested ? cancellationToken : new CancellationToken(true));
+            }
+            catch (Exception ex)
+            {
+                return Task.FromException(ex);
+            }
+#else
+            return Task.Run(() => WriteFileAtomic(path, data, cancellationToken), cancellationToken);
+#endif
+        }
 
-                string tempPath = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-                try
+        private static void WriteFileAtomic(string path, byte[] data, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string dir = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+            {
+                Directory.CreateDirectory(dir);
+            }
+
+            string tempPath = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
+            {
+                File.WriteAllBytes(tempPath, data);
+                if (File.Exists(path))
                 {
-                    File.WriteAllBytes(tempPath, data);
-                    if (File.Exists(path))
+                    File.Replace(tempPath, path, null);
+                }
+                else
+                {
+                    try
                     {
+                        File.Move(tempPath, path);
+                    }
+                    catch (IOException) when (File.Exists(path))
+                    {
+                        // Another concurrent writer created the cache file first; replace atomically.
                         File.Replace(tempPath, path, null);
                     }
-                    else
-                    {
-                        try
-                        {
-                            File.Move(tempPath, path);
-                        }
-                        catch (IOException) when (File.Exists(path))
-                        {
-                            // Another concurrent writer created the cache file first; replace atomically.
-                            File.Replace(tempPath, path, null);
-                        }
-                    }
                 }
-                catch
+            }
+            catch
+            {
+                if (File.Exists(tempPath))
                 {
-                    if (File.Exists(tempPath))
-                    {
-                        try { File.Delete(tempPath); } catch { }
-                    }
-                    throw;
+                    try { File.Delete(tempPath); } catch { }
                 }
-            }, cancellationToken);
+                throw;
+            }
         }
     }
 }

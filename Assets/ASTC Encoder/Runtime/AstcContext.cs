@@ -139,9 +139,7 @@ namespace Aperture.Astcenc.Runtime
                 parentPtr = parentContext.m_Context;
             }
 
-            int resolvedThreads = threadCount <= 0
-                ? Math.Max(1, Math.Min(Environment.ProcessorCount, 4))
-                : threadCount;
+            int resolvedThreads = ResolveThreadCount(threadCount);
 
             float qualityValue = AstcCpuBackend.GetQualityValue(quality);
             astcenc_profile profile = AstcCpuBackend.GetColorProfile(graphicsFormat, textureType);
@@ -173,6 +171,17 @@ namespace Aperture.Astcenc.Runtime
             return new AstcContext(context, profile, blockSize, blockX, blockY, quality, flags, resolvedThreads, useUnityJobSystem);
         }
 
+        internal static int ResolveThreadCount(int threadCount)
+        {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            return 1;
+#else
+            return threadCount <= 0
+                ? Math.Max(1, Math.Min(Environment.ProcessorCount, 4))
+                : threadCount;
+#endif
+        }
+
         /// <summary>
         /// Creates a lightweight decompression-only ASTC context for CPU decoding via ARM astc-encoder.
         /// </summary>
@@ -194,9 +203,7 @@ namespace Aperture.Astcenc.Runtime
                 return null;
             }
 
-            int resolvedThreads = threadCount <= 0
-                ? Math.Max(1, Math.Min(Environment.ProcessorCount, 4))
-                : threadCount;
+            int resolvedThreads = ResolveThreadCount(threadCount);
 
             astcenc_profile profile = isHdr
                 ? astcenc_profile.ASTCENC_PRF_HDR

@@ -86,4 +86,22 @@ if [[ -f "${PLUGINS_DIR}/Linux/x86_64/libastcenc-sse4.1-shared.so" ]]; then
   check_elf_symbols "${LINUX_SO}"
 fi
 
+WEBGL_DIR="${PLUGINS_DIR}/WebGL"
+if [[ ! -d "${WEBGL_DIR}" ]]; then
+  echo "ERROR: Missing WebGL plugin directory: ${WEBGL_DIR}" >&2
+  exit 1
+fi
+WEBGL_CPP_COUNT="$(find "${WEBGL_DIR}" -maxdepth 1 -name 'astcenc_*.cpp' | wc -l)"
+if [[ "${WEBGL_CPP_COUNT}" -lt 22 ]]; then
+  echo "ERROR: Expected 22 astcenc C++ sources under ${WEBGL_DIR}, found ${WEBGL_CPP_COUNT}" >&2
+  exit 1
+fi
+for sym in "${REQUIRED_SYMBOLS[@]}"; do
+  if ! grep -q "${sym}" "${WEBGL_DIR}/astcenc_entry.cpp"; then
+    echo "ERROR: Missing expected C entry point '${sym}' in ${WEBGL_DIR}/astcenc_entry.cpp" >&2
+    exit 1
+  fi
+done
+echo "[verify-native-plugins] Verified WebGL WASM C++ source plugin (${WEBGL_CPP_COUNT} sources + required entry points)."
+
 echo "[verify-native-plugins] All native plugin binaries and required P/Invoke symbols verified."

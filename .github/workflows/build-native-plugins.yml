@@ -324,6 +324,35 @@ jobs:
           path: build-android-${{ matrix.abi }}/Source/${{ matrix.output_name }}
           if-no-files-found: error
 
+  build-webgl-wasm:
+    name: WebGL WASM (Emscripten C++ Source Verification)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository and astc-encoder submodule
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - name: Install Emscripten
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq emscripten
+          em++ --version
+
+      - name: Sync WebGL C++ sources and compile-verify WASM static library
+        run: |
+          chmod +x .github/scripts/sync-webgl-astcenc.sh
+          ./.github/scripts/sync-webgl-astcenc.sh build-webgl-src
+          mkdir -p build-webgl-obj
+          for f in build-webgl-src/*.cpp; do
+            base="$(basename "$f" .cpp)"
+            em++ -O2 -c "$f" -Ibuild-webgl-src -o "build-webgl-obj/${base}.o"
+          done
+          emar rcs build-webgl-obj/libastcenc-wasm.a build-webgl-obj/*.o
+          llvm-nm --defined-only build-webgl-obj/libastcenc-wasm.a | grep "astcenc_config_init"
+          llvm-nm --defined-only build-webgl-obj/libastcenc-wasm.a | grep "astcenc_compress_image"
+          llvm-nm --defined-only build-webgl-obj/libastcenc-wasm.a | grep "astcenc_decompress_image"
+
   package-plugins:
     name: Package Unity Native Plugins
     runs-on: ubuntu-latest
@@ -334,6 +363,7 @@ jobs:
       - build-macos-universal
       - build-ios-arm64
       - build-android
+      - build-webgl-wasm
     permissions:
       contents: write
     steps:
@@ -388,8 +418,9 @@ jobs:
           cp dist/Plugins/x64/astcenc-sse4.1-shared.dll "Assets/ASTC Encoder/Plugins/x64/"
           cp dist/Plugins/x64/astcenc-avx2-shared.dll "Assets/ASTC Encoder/Plugins/x64/"
           cp dist/Plugins/Linux/x86_64/libastcenc-sse4.1-shared.so "Assets/ASTC Encoder/Plugins/Linux/x86_64/"
-          chmod +x .github/scripts/build-linux-astcenc.sh
+          chmod +x .github/scripts/build-linux-astcenc.sh .github/scripts/sync-webgl-astcenc.sh
           ./.github/scripts/build-linux-astcenc.sh --meta-only
+          ./.github/scripts/sync-webgl-astcenc.sh
           cp dist/Plugins/Mac/libastcenc-shared.dylib "Assets/ASTC Encoder/Plugins/Mac/"
           cp dist/Plugins/iOS/libastcenc-neon-static.a "Assets/ASTC Encoder/Plugins/iOS/"
           cp dist/Plugins/Android/arm64-v8a/libastcenc-neon-shared.so "Assets/ASTC Encoder/Plugins/Android/arm64-v8a/"

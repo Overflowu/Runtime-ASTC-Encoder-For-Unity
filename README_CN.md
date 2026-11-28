@@ -141,7 +141,8 @@ public void UpdateAtlasTile(CommandBuffer cmd, Texture tileSrc, Texture2D astcAt
 | **macOS**（11.0+） | Universal（`arm64` NEON + `x86_64` SSE4.1 + `x86_64h` AVX2） | Metal | Editor & Standalone |
 | **Windows x64** | **AVX2** + **SSE4.1**（运行时自动分派） | D3D11 / D3D12 | 双 DLL 已内置于 `Plugins/x64/`，静态 `/MT` 运行时 |
 | **Linux x64** | SSE4.1（CI 产物 / 本地构建脚本） | Vulkan / OpenGL | 由 GitHub Actions 或 `.github/scripts/build-linux-astcenc.sh` 构建 |
-| **WebGL / 其他** | 平滑降级（`IsCpuSupported == false`） | 支持 Compute 时可用 | 无需原生库即可正常编译 |
+| **WebGL（WASM）** | Emscripten 静态链接 WASM（`__Internal`，单线程安全） | 支持 Compute 时可用 | `Plugins/WebGL/` 内置 WebGL 专用 C++ 源码插件，由 Unity 自带 Emscripten 自动编译，跨版本无 ABI 冲突 |
+| **其他平台** | 平滑降级（`IsCpuSupported == false`） | 支持 Compute 时可用 | 无需原生库即可正常编译 |
 
 ---
 

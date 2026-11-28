@@ -69,6 +69,12 @@ namespace Aperture.Astcenc.Editor
             ExecuteBuild(BuildTarget.StandaloneLinux64, "build/StandaloneLinux64/ASTCEncoder.x86_64", "ASTCEncoder", "Mono", enableE2ESmoke: false, isDevelopment: false);
         }
 
+        [MenuItem("Build/CI/WebGL (WASM)")]
+        public static void BuildWebGLLocal()
+        {
+            ExecuteBuild(BuildTarget.WebGL, "build/WebGL", "ASTCEncoder", "IL2CPP", enableE2ESmoke: false, isDevelopment: false);
+        }
+
         private static void ExecuteBuild(
             BuildTarget buildTarget,
             string outputPath,
@@ -207,7 +213,7 @@ namespace Aperture.Astcenc.Editor
 
         private static void EnsureParentDirectory(BuildTarget buildTarget, string locationPath)
         {
-            if (buildTarget == BuildTarget.iOS)
+            if (buildTarget == BuildTarget.iOS || buildTarget == BuildTarget.WebGL)
             {
                 Directory.CreateDirectory(locationPath);
             }
@@ -258,6 +264,11 @@ namespace Aperture.Astcenc.Editor
                 case "linux":
                 case "linux64":
                     buildTarget = BuildTarget.StandaloneLinux64;
+                    return true;
+                case "web":
+                case "wasm":
+                case "webgl":
+                    buildTarget = BuildTarget.WebGL;
                     return true;
                 default:
                     return false;

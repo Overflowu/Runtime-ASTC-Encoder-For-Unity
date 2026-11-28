@@ -129,9 +129,13 @@ namespace Aperture.Astcenc.Runtime
         public long MaxGpuTexelsPerFrame { get; set; } = 1024L * 1024L;
 
         /// <summary>
-        /// Maximum number of concurrent background CPU compression jobs (default: half of logical cores, minimum 1).
+        /// Maximum number of concurrent background CPU compression jobs (default: half of logical cores, minimum 1; always 1 on WebGL).
         /// </summary>
+#if UNITY_WEBGL && !UNITY_EDITOR
+        public int MaxConcurrentCpuTasks { get; set; } = 1;
+#else
         public int MaxConcurrentCpuTasks { get; set; } = Math.Max(1, Environment.ProcessorCount / 2);
+#endif
 
         public int PendingGpuCount => m_GpuQueues[0].Count + m_GpuQueues[1].Count + m_GpuQueues[2].Count;
         public int PendingCpuCount => m_CpuQueues[0].Count + m_CpuQueues[1].Count + m_CpuQueues[2].Count;
@@ -329,7 +333,8 @@ namespace Aperture.Astcenc.Runtime
 
             // 2. Dispatch CPU jobs up to MaxConcurrentCpuTasks
             int maxCpu = Math.Max(1, MaxConcurrentCpuTasks);
-            while (Volatile.Read(ref m_ActiveCpuCount) < maxCpu && TryPeekHighestPriority(m_CpuQueues, out PendingJob nextCpu))
+            int dispatchedCpu = 0;
+            while (dispatchedCpu < maxCpu && Volatile.Read(ref m_ActiveCpuCount) < maxCpu && TryPeekHighestPriority(m_CpuQueues, out PendingJob nextCpu))
             {
                 DequeueHighestPriority(m_CpuQueues);
                 if (nextCpu.CancellationToken.IsCancellationRequested)
@@ -338,6 +343,7 @@ namespace Aperture.Astcenc.Runtime
                     continue;
                 }
 
+                dispatchedCpu++;
                 RunCpuJob(nextCpu);
             }
         }
