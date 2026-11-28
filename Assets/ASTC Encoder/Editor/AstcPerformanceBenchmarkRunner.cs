@@ -11,6 +11,7 @@ using UnityEditor;
 using UnityEngine;
 using UnityEngine.Experimental.Rendering;
 using Debug = UnityEngine.Debug;
+using Encoder = Aperture.Astcenc.Runtime.Encoder;
 
 namespace Aperture.Astcenc.Editor
 {
@@ -603,8 +604,9 @@ namespace Aperture.Astcenc.Editor
 
             using var srcRgba8 = new NativeArray<byte>(w * h * 4, Allocator.Persistent);
             using var dstAstc = new NativeArray<byte>(outCapacity, Allocator.Persistent);
-            for (int i = 0; i < srcRgba8.Length; i++)
-                srcRgba8[i] = (byte)((i * 37) & 0xFF);
+            var srcWritable = srcRgba8;
+            for (int i = 0; i < srcWritable.Length; i++)
+                srcWritable[i] = (byte)((i * 37) & 0xFF);
 
             var opt = AstcCompressOptions.Default;
             opt.Backend = EncodeBackend.Cpu;
