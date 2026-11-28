@@ -37,9 +37,23 @@ public static class astcenc_api
         ref IntPtr context,
         IntPtr parent_context);
 
+    [DllImport(NeonLibraryName, EntryPoint = "astcenc_context_alloc", CallingConvention = CallingConvention.Cdecl)]
+    private static extern astcenc_error astcenc_context_alloc_parent_neon(
+        IntPtr config,
+        uint thread_count,
+        ref IntPtr context,
+        IntPtr parent_context);
+
     [DllImport(NoneLibraryName, EntryPoint = "astcenc_context_alloc", CallingConvention = CallingConvention.Cdecl)]
     private static extern astcenc_error astcenc_context_alloc_none(
         ref astcenc_config config,
+        uint thread_count,
+        ref IntPtr context,
+        IntPtr parent_context);
+
+    [DllImport(NoneLibraryName, EntryPoint = "astcenc_context_alloc", CallingConvention = CallingConvention.Cdecl)]
+    private static extern astcenc_error astcenc_context_alloc_parent_none(
+        IntPtr config,
         uint thread_count,
         ref IntPtr context,
         IntPtr parent_context);
@@ -173,6 +187,17 @@ public static class astcenc_api
         return IntPtr.Size == 8
             ? astcenc_context_alloc_neon(ref config, thread_count, ref context, parent_context)
             : astcenc_context_alloc_none(ref config, thread_count, ref context, parent_context);
+    }
+
+    public static astcenc_error astcenc_context_alloc(
+        IntPtr config,
+        uint thread_count,
+        ref IntPtr context,
+        IntPtr parent_context)
+    {
+        return IntPtr.Size == 8
+            ? astcenc_context_alloc_parent_neon(config, thread_count, ref context, parent_context)
+            : astcenc_context_alloc_parent_none(config, thread_count, ref context, parent_context);
     }
 
     /**
@@ -329,8 +354,12 @@ public static class astcenc_api
 
     [DllImport(Avx2LibraryName, EntryPoint = "astcenc_context_alloc", CallingConvention = CallingConvention.Cdecl)]
     private static extern astcenc_error astcenc_context_alloc_avx2(ref astcenc_config config, uint thread_count, ref IntPtr context, IntPtr parent_context);
+    [DllImport(Avx2LibraryName, EntryPoint = "astcenc_context_alloc", CallingConvention = CallingConvention.Cdecl)]
+    private static extern astcenc_error astcenc_context_alloc_parent_avx2(IntPtr config, uint thread_count, ref IntPtr context, IntPtr parent_context);
     [DllImport(Sse41LibraryName, EntryPoint = "astcenc_context_alloc", CallingConvention = CallingConvention.Cdecl)]
     private static extern astcenc_error astcenc_context_alloc_sse41(ref astcenc_config config, uint thread_count, ref IntPtr context, IntPtr parent_context);
+    [DllImport(Sse41LibraryName, EntryPoint = "astcenc_context_alloc", CallingConvention = CallingConvention.Cdecl)]
+    private static extern astcenc_error astcenc_context_alloc_parent_sse41(IntPtr config, uint thread_count, ref IntPtr context, IntPtr parent_context);
 
     [DllImport(Avx2LibraryName, EntryPoint = "astcenc_compress_image", CallingConvention = CallingConvention.Cdecl)]
     private static extern astcenc_error astcenc_compress_image_avx2(IntPtr context, ref astcenc_image image, ref astcenc_swizzle swizzle, IntPtr data_out, UIntPtr data_len, uint thread_index);
@@ -367,6 +396,9 @@ public static class astcenc_api
 
     public static astcenc_error astcenc_context_alloc(ref astcenc_config config, uint thread_count, ref IntPtr context, IntPtr parent_context)
         => s_UseAvx2 ? astcenc_context_alloc_avx2(ref config, thread_count, ref context, parent_context) : astcenc_context_alloc_sse41(ref config, thread_count, ref context, parent_context);
+
+    public static astcenc_error astcenc_context_alloc(IntPtr config, uint thread_count, ref IntPtr context, IntPtr parent_context)
+        => s_UseAvx2 ? astcenc_context_alloc_parent_avx2(config, thread_count, ref context, parent_context) : astcenc_context_alloc_parent_sse41(config, thread_count, ref context, parent_context);
 
     public static astcenc_error astcenc_compress_image(IntPtr context, ref astcenc_image image, ref astcenc_swizzle swizzle, IntPtr data_out, UIntPtr data_len, uint thread_index)
         => s_UseAvx2 ? astcenc_compress_image_avx2(context, ref image, ref swizzle, data_out, data_len, thread_index) : astcenc_compress_image_sse41(context, ref image, ref swizzle, data_out, data_len, thread_index);
@@ -454,6 +486,13 @@ public static class astcenc_api
     public static extern astcenc_error astcenc_context_alloc(
         ref astcenc_config config, 
         uint thread_count, 
+        ref IntPtr context,
+        IntPtr parent_context);
+
+    [DllImport(LibraryName, EntryPoint = "astcenc_context_alloc", CallingConvention = CallingConvention.Cdecl)]
+    public static extern astcenc_error astcenc_context_alloc(
+        IntPtr config,
+        uint thread_count,
         ref IntPtr context,
         IntPtr parent_context);
 
@@ -565,6 +604,12 @@ public static class astcenc_api
 
     public static astcenc_error astcenc_context_alloc(
         ref astcenc_config config,
+        uint thread_count,
+        ref IntPtr context,
+        IntPtr parent_context) => astcenc_error.ASTCENC_ERR_NOT_IMPLEMENTED;
+
+    public static astcenc_error astcenc_context_alloc(
+        IntPtr config,
         uint thread_count,
         ref IntPtr context,
         IntPtr parent_context) => astcenc_error.ASTCENC_ERR_NOT_IMPLEMENTED;

@@ -161,7 +161,9 @@ namespace Aperture.Astcenc.Runtime
             }
 
             IntPtr context = IntPtr.Zero;
-            status = astcenc_api.astcenc_context_alloc(ref config, (uint)resolvedThreads, ref context, parentPtr);
+            status = parentPtr != IntPtr.Zero
+                ? astcenc_api.astcenc_context_alloc(IntPtr.Zero, (uint)resolvedThreads, ref context, parentPtr)
+                : astcenc_api.astcenc_context_alloc(ref config, (uint)resolvedThreads, ref context, IntPtr.Zero);
             if (status != astcenc_error.ASTCENC_SUCCESS)
             {
                 Debug.LogError("Codec context alloc failed:" + status);

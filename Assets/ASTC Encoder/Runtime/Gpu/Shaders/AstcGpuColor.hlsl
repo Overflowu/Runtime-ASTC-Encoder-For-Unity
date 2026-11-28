@@ -10,78 +10,47 @@
 float AstcLinearToSRGBScalar(float c)
 {
     c = saturate(c);
-    if (c <= 0.0031308)
-        return c * 12.92;
-    // Fast sqrt-based minimax approximation (max error < 0.24/255, 0/256 8-bit round-trip mismatches, zero pow()).
     float s1 = sqrt(c);
     float s2 = sqrt(s1);
     float s3 = sqrt(s2);
-    return saturate(0.662002687 * s1 + 0.684122060 * s2 - 0.323583601 * s3 - 0.0225411470 * c);
+    float hi = saturate(0.662002687 * s1 + 0.684122060 * s2 - 0.323583601 * s3 - 0.0225411470 * c);
+    return (c <= 0.0031308) ? (c * 12.92) : hi;
 }
 
 float3 AstcLinearToSRGB(float3 rgb)
 {
-    return float3(
-        AstcLinearToSRGBScalar(rgb.r),
-        AstcLinearToSRGBScalar(rgb.g),
-        AstcLinearToSRGBScalar(rgb.b));
+    float3 c = saturate(rgb);
+    float3 s1 = sqrt(c);
+    float3 s2 = sqrt(s1);
+    float3 s3 = sqrt(s2);
+    float3 hi = saturate(0.662002687 * s1 + 0.684122060 * s2 - 0.323583601 * s3 - 0.0225411470 * c);
+    return lerp(hi, c * 12.92, float3(c <= 0.0031308));
 }
 
-// Exact Khronos ASTC float -> 16-bit LNS [0, 65535] conversion.
+// Exact Khronos ASTC float4 -> 16-bit LNS [0, 65535] conversion (branchless vectorized).
 // Negative values and NaNs clamp to 0; values >= 65536 clamp to 65535.
-float AstcFloatToLns(float a)
-{
-    if (!(a > (1.0 / 67108864.0)))
-    {
-        return 0.0;
-    }
-    if (a >= 65536.0)
-    {
-        return 65535.0;
-    }
-
-    uint ai = asuint(a);
-    int expVal = (int)((ai >> 23u) & 0xFFu) - 126;
-    uint mantBits = (ai & 0x807FFFFFu) | 0x3F000000u;
-    float mant = asfloat(mantBits);
-
-    float scaled;
-    int lnsExp;
-    if (expVal < -13)
-    {
-        scaled = a * 33554432.0;
-        lnsExp = 0;
-    }
-    else
-    {
-        scaled = (mant - 0.5) * 4096.0;
-        lnsExp = expVal + 14;
-    }
-
-    float lnsMant;
-    if (scaled < 384.0)
-    {
-        lnsMant = scaled * (4.0 / 3.0);
-    }
-    else if (scaled <= 1408.0)
-    {
-        lnsMant = scaled + 128.0;
-    }
-    else
-    {
-        lnsMant = (scaled + 512.0) * (4.0 / 5.0);
-    }
-
-    return clamp(lnsMant + (float)lnsExp * 2048.0 + 1.0, 0.0, 65535.0);
-}
-
 float4 AstcFloatToLns4(float4 c)
 {
-    return float4(
-        AstcFloatToLns(c.r),
-        AstcFloatToLns(c.g),
-        AstcFloatToLns(c.b),
-        AstcFloatToLns(c.a));
+    float4 validPos = float4(c > (1.0 / 67108864.0));
+    float4 tooLarge = float4(c >= 65536.0);
+    float4 safeC = lerp(float4(1.0, 1.0, 1.0, 1.0), min(c, 65536.0), validPos);
+
+    uint4 ai = asuint(safeC);
+    int4 expVal = (int4)((ai >> 23u) & 0xFFu) - 126;
+    uint4 mantBits = (ai & 0x807FFFFFu) | 0x3F000000u;
+    float4 mant = asfloat(mantBits);
+
+    float4 subnorm = float4(expVal < -13);
+    float4 scaled = lerp((mant - 0.5) * 4096.0, safeC * 33554432.0, subnorm);
+    float4 lnsExp = (1.0 - subnorm) * (float4)(expVal + 14);
+
+    float4 isLo = float4(scaled < 384.0);
+    float4 isMid = float4(scaled <= 1408.0);
+    float4 lnsMant = lerp(lerp((scaled + 512.0) * (4.0 / 5.0), scaled + 128.0, isMid), scaled * (4.0 / 3.0), isLo);
+
+    float4 res = clamp(lnsMant + lnsExp * 2048.0 + 1.0, 0.0, 65535.0);
+    res = lerp(res, float4(65535.0, 65535.0, 65535.0, 65535.0), tooLarge);
+    return res * validPos;
 }
 
 uint AstcFloatToHalfU16(float x)
@@ -95,16 +64,22 @@ uint AstcFloatToHalfU16(float x)
 // ASTC HDR Endpoint Quantization (CEM 11 / CEM 14 / CEM 15)
 // ============================================================================
 
+// Shared per-thread scratch arrays for HDR endpoint quantization (avoids per-call-site indexableTemp explosion in FXC).
+static uint g_AstcHdrCodes[6];
+static uint g_AstcHdrRawV[6];
+static uint g_AstcHdrCandCodes[6];
+static uint g_AstcHdrUqV[6];
+
 // Exact Khronos ASTC Spec CEM 11 (HDR RGB Direct) hardware unpacker.
-// Given 6 unquantized 8-bit endpoint values v[0..5], returns hardware-reconstructed LNS endpoints in [0, 65535].
-void AstcUnpackHdrRgb(uint v[6], out float3 outE0Lns, out float3 outE1Lns)
+// Reads 6 unquantized 8-bit endpoint values from g_AstcHdrUqV[0..5], returns hardware-reconstructed LNS endpoints in [0, 65535].
+void AstcUnpackHdrRgb(out float3 outE0Lns, out float3 outE1Lns)
 {
-    uint v0 = v[0];
-    uint v1 = v[1];
-    uint v2 = v[2];
-    uint v3 = v[3];
-    uint v4 = v[4];
-    uint v5 = v[5];
+    uint v0 = g_AstcHdrUqV[0];
+    uint v1 = g_AstcHdrUqV[1];
+    uint v2 = g_AstcHdrUqV[2];
+    uint v3 = g_AstcHdrUqV[3];
+    uint v4 = g_AstcHdrUqV[4];
+    uint v5 = g_AstcHdrUqV[5];
 
     uint majcomp = ((v4 & 0x80u) >> 7u) | (((v5 & 0x80u) >> 7u) << 1u);
     if (majcomp == 3u)
@@ -185,8 +160,8 @@ void AstcUnpackHdrRgb(uint v[6], out float3 outE0Lns, out float3 outE1Lns)
     outE1Lns = float3((float)(r1 << 4), (float)(g1 << 4), (float)(bl1 << 4));
 }
 
-// Packs CEM 11 delta mode fields into 6 8-bit endpoint values.
-void AstcPackHdrRgbDeltaMode(uint majcomp, uint modeval, uint a, uint b0, uint b1, uint c, uint d0, uint d1, out uint v[6])
+// Packs CEM 11 delta mode fields into 6 8-bit endpoint values in g_AstcHdrRawV[0..5].
+void AstcPackHdrRgbDeltaMode(uint majcomp, uint modeval, uint a, uint b0, uint b1, uint c, uint d0, uint d1)
 {
     uint v0 = a & 0xFFu;
     uint v1 = ((modeval & 1u) << 7u) | (((a >> 8u) & 1u) << 6u) | (c & 0x3Fu);
@@ -250,38 +225,37 @@ void AstcPackHdrRgbDeltaMode(uint majcomp, uint modeval, uint a, uint b0, uint b
     v4 |= (bit2 << 6u) | (bit4 << 5u);
     v5 |= (bit3 << 6u) | (bit5 << 5u);
 
-    v[0] = v0; v[1] = v1; v[2] = v2; v[3] = v3; v[4] = v4; v[5] = v5;
+    g_AstcHdrRawV[0] = v0; g_AstcHdrRawV[1] = v1; g_AstcHdrRawV[2] = v2;
+    g_AstcHdrRawV[3] = v3; g_AstcHdrRawV[4] = v4; g_AstcHdrRawV[5] = v5;
 }
 
-// Encodes HDR RGB endpoints e0, e1 (in LNS [0, 65535]) into 6 BISE endpoint codes
+// Encodes HDR RGB endpoints e0, e1 (in LNS [0, 65535]) into g_AstcHdrCodes[0..5]
 // using CEM_HDR_RGB_DIRECT (11): tries high-precision majcomp 0/1/2 delta modes (up to 12-bit)
 // and compares exact hardware-reconstructed LNS MSE against majcomp == 3 direct mode.
 void AstcQuantizeHdrRgbEndpoints(
     float3 e0Lns,
     float3 e1Lns,
     uint epQuant,
-    out uint codes[6],
     out float3 uq0Lns,
     out float3 uq1Lns)
 {
     // Baseline: majcomp == 3 direct mode (always valid)
-    uint r0 = (uint)clamp(floor(e0Lns.r / 256.0 + 0.5), 0.0, 255.0);
-    uint r1 = (uint)clamp(floor(e1Lns.r / 256.0 + 0.5), 0.0, 255.0);
-    uint g0 = (uint)clamp(floor(e0Lns.g / 256.0 + 0.5), 0.0, 255.0);
-    uint g1 = (uint)clamp(floor(e1Lns.g / 256.0 + 0.5), 0.0, 255.0);
-    uint b0 = 128u + (uint)clamp(floor(e0Lns.b / 512.0 + 0.5), 0.0, 127.0);
-    uint b1 = 128u + (uint)clamp(floor(e1Lns.b / 512.0 + 0.5), 0.0, 127.0);
+    g_AstcHdrRawV[0] = (uint)clamp(floor(e0Lns.r / 256.0 + 0.5), 0.0, 255.0);
+    g_AstcHdrRawV[1] = (uint)clamp(floor(e1Lns.r / 256.0 + 0.5), 0.0, 255.0);
+    g_AstcHdrRawV[2] = (uint)clamp(floor(e0Lns.g / 256.0 + 0.5), 0.0, 255.0);
+    g_AstcHdrRawV[3] = (uint)clamp(floor(e1Lns.g / 256.0 + 0.5), 0.0, 255.0);
+    g_AstcHdrRawV[4] = 128u + (uint)clamp(floor(e0Lns.b / 512.0 + 0.5), 0.0, 127.0);
+    g_AstcHdrRawV[5] = 128u + (uint)clamp(floor(e1Lns.b / 512.0 + 0.5), 0.0, 127.0);
 
-    uint uqR0, uqR1, uqG0, uqG1, uqB0, uqB1;
-    codes[0] = AstcQuantizeColor(r0, epQuant, uqR0);
-    codes[1] = AstcQuantizeColor(r1, epQuant, uqR1);
-    codes[2] = AstcQuantizeColor(g0, epQuant, uqG0);
-    codes[3] = AstcQuantizeColor(g1, epQuant, uqG1);
-    codes[4] = AstcQuantizeColorMin128(b0, epQuant, uqB0);
-    codes[5] = AstcQuantizeColorMin128(b1, epQuant, uqB1);
+    [loop] for (uint bi = 0u; bi < 6u; ++bi)
+    {
+        uint uqTmp;
+        g_AstcHdrCodes[bi] = AstcQuantizeColorRange(g_AstcHdrRawV[bi], epQuant, bi >= 4u, uqTmp);
+        g_AstcHdrUqV[bi] = uqTmp;
+    }
 
-    uq0Lns = float3((float)(uqR0 << 8u), (float)(uqG0 << 8u), (float)((uqB0 & 0x7Fu) << 9u));
-    uq1Lns = float3((float)(uqR1 << 8u), (float)(uqG1 << 8u), (float)((uqB1 & 0x7Fu) << 9u));
+    uq0Lns = float3((float)(g_AstcHdrUqV[0] << 8u), (float)(g_AstcHdrUqV[2] << 8u), (float)((g_AstcHdrUqV[4] & 0x7Fu) << 9u));
+    uq1Lns = float3((float)(g_AstcHdrUqV[1] << 8u), (float)(g_AstcHdrUqV[3] << 8u), (float)((g_AstcHdrUqV[5] & 0x7Fu) << 9u));
 
     float3 d0 = uq0Lns - e0Lns;
     float3 d1 = uq1Lns - e1Lns;
@@ -328,7 +302,7 @@ void AstcQuantizeHdrRgbEndpoints(
     int D1_12 = (R0 - B0) - B1_12;
 
     // Try finest resolution modes first (modeval 7..0) and pick the first that fits.
-    for (uint mi = 0u; mi < 8u; ++mi)
+    [loop] for (uint mi = 0u; mi < 8u; ++mi)
     {
         uint mv = 7u - mi;
         uint sh = (mv >> 1u) ^ 3u;
@@ -354,24 +328,23 @@ void AstcQuantizeHdrRgbEndpoints(
             && d1S >= dMin && d1S <= dMax)
         {
             uint dMask = (1u << db) - 1u;
-            uint rawV[6];
-            AstcPackHdrRgbDeltaMode(majcomp, mv, (uint)aS, (uint)b0S, (uint)b1S, (uint)cS, ((uint)d0S) & dMask, ((uint)d1S) & dMask, rawV);
+            AstcPackHdrRgbDeltaMode(majcomp, mv, (uint)aS, (uint)b0S, (uint)b1S, (uint)cS, ((uint)d0S) & dMask, ((uint)d1S) & dMask);
 
-            uint candCodes[6];
-            uint uqV[6];
-            for (uint ci = 0u; ci < 6u; ++ci)
+            [loop] for (uint ci = 0u; ci < 6u; ++ci)
             {
-                candCodes[ci] = AstcQuantizeColor(rawV[ci], epQuant, uqV[ci]);
+                uint uqTmp;
+                g_AstcHdrCandCodes[ci] = AstcQuantizeColor(g_AstcHdrRawV[ci], epQuant, uqTmp);
+                g_AstcHdrUqV[ci] = uqTmp;
             }
 
             float3 cand0, cand1;
-            AstcUnpackHdrRgb(uqV, cand0, cand1);
+            AstcUnpackHdrRgb(cand0, cand1);
             float3 cd0 = cand0 - e0Lns;
             float3 cd1 = cand1 - e1Lns;
             float candErr = dot(cd0, cd0) + dot(cd1, cd1);
             if (candErr < bestErr)
             {
-                for (uint cj = 0u; cj < 6u; ++cj) codes[cj] = candCodes[cj];
+                [loop] for (uint cj = 0u; cj < 6u; ++cj) g_AstcHdrCodes[cj] = g_AstcHdrCandCodes[cj];
                 uq0Lns = cand0;
                 uq1Lns = cand1;
             }

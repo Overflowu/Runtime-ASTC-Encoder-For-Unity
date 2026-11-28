@@ -1046,7 +1046,11 @@ namespace Aperture.Astcenc.Runtime
                 return null;
             }
 
+#if UNITY_2022_1_OR_NEWER
             TextureCreationFlags flags = TextureCreationFlags.DontInitializePixels | TextureCreationFlags.DontUploadUponCreate;
+#else
+            TextureCreationFlags flags = TextureCreationFlags.None;
+#endif
             if (mipCount > 1)
                 flags |= TextureCreationFlags.MipChain;
 
@@ -1099,7 +1103,11 @@ namespace Aperture.Astcenc.Runtime
                 return null;
             }
 
+#if UNITY_2022_1_OR_NEWER
             TextureCreationFlags flags = TextureCreationFlags.DontInitializePixels | TextureCreationFlags.DontUploadUponCreate;
+#else
+            TextureCreationFlags flags = TextureCreationFlags.None;
+#endif
             if (mipCount > 1)
                 flags |= TextureCreationFlags.MipChain;
 
@@ -1267,7 +1275,11 @@ namespace Aperture.Astcenc.Runtime
             // Fast zero-readback path (including GPU-generated mipmaps) when all mip dimensions align cleanly and GPU natively samples ASTC
             if (CanUseDirectCopy(source.width, source.height, mipCount, blockSize, astcFormat))
             {
+#if UNITY_2022_1_OR_NEWER
                 TextureCreationFlags flags = TextureCreationFlags.DontInitializePixels | TextureCreationFlags.DontUploadUponCreate;
+#else
+                TextureCreationFlags flags = TextureCreationFlags.None;
+#endif
                 if (mipCount > 1)
                     flags |= TextureCreationFlags.MipChain;
 

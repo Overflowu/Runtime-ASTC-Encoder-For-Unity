@@ -1,0 +1,388 @@
+name: Unity Multi-Platform Build & E2E Tests
+
+on:
+  push:
+    branches:
+      - develop
+  pull_request:
+    branches:
+      - develop
+  workflow_dispatch:
+    inputs:
+      unity_version:
+        description: "Unity Editor version on GameCI (international equivalent of 2021.3.6f1c1)"
+        required: false
+        default: "2021.3.6f1"
+        type: string
+      run_android_emulator:
+        description: "Run Android ARM64 emulator E2E test on macOS runner"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+  checks: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UNITY_VERSION: ${{ inputs.unity_version || '2021.3.6f1' }}
+
+jobs:
+  native-abi-check:
+    name: Native Plugins & Linux .so Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository (with Git LFS & submodules)
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+          submodules: true
+
+      - name: Build Linux x86_64 libastcenc-sse4.1-shared.so
+        run: |
+          chmod +x scripts/build-linux-astcenc.sh scripts/verify-native-plugins.sh
+          ./scripts/build-linux-astcenc.sh
+
+      - name: Verify all platform native plugins and exported symbols
+        run: ./scripts/verify-native-plugins.sh
+
+      - name: Upload Linux native plugin artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-astcenc-plugin
+          path: |
+            Assets/ASTC Encoder/Plugins/Linux
+            Assets/ASTC Encoder/Plugins/Linux.meta
+          retention-days: 1
+
+  check-unity-license:
+    name: Check Unity License Secrets
+    runs-on: ubuntu-latest
+    outputs:
+      has_license: ${{ steps.check.outputs.has_license }}
+    steps:
+      - name: Check configured Unity license secrets
+        id: check
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+        run: |
+          if [[ -n "${UNITY_LICENSE}" || -n "${UNITY_SERIAL}" ]]; then
+            echo "has_license=true" >> "$GITHUB_OUTPUT"
+            echo "Unity license secret detected. Running Unity Test Runner and multi-platform builds." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "has_license=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::UNITY_LICENSE (or UNITY_SERIAL) secret is not configured. Skipping Unity build/test jobs. See docs/CI_E2E_GUIDE.md."
+            {
+              echo "### Unity License Secret Not Configured"
+              echo "Skipped Unity Editor tests and multi-platform player builds because neither \`UNITY_LICENSE\` nor \`UNITY_SERIAL\` is configured in Repository Secrets."
+              echo "See \`docs/CI_E2E_GUIDE.md\` for setup instructions."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  unity-tests:
+    name: Unity Test Runner (EditMode)
+    needs: [native-abi-check, check-unity-license]
+    if: needs.check-unity-license.outputs.has_license == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository (with Git LFS)
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Download Linux native plugin
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-astcenc-plugin
+          path: Assets/ASTC Encoder/Plugins
+
+      - name: Cache Unity Library
+        uses: actions/cache@v4
+        with:
+          path: Library
+          key: Library-tests-${{ env.UNITY_VERSION }}-${{ hashFiles('Assets/**', 'Packages/**', 'ProjectSettings/**') }}
+          restore-keys: |
+            Library-tests-${{ env.UNITY_VERSION }}-
+            Library-tests-
+
+      - name: Run Unity EditMode Tests
+        uses: game-ci/unity-test-runner@v4.3.2
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+          UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+        with:
+          unityVersion: ${{ env.UNITY_VERSION }}
+          testMode: EditMode
+          customParameters: -nographics
+          artifactsPath: test-results
+          githubToken: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Unity test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unity-test-results
+          path: test-results
+          retention-days: 7
+
+  build-players:
+    name: Build (${{ matrix.targetPlatform }})
+    needs: [native-abi-check, check-unity-license]
+    if: needs.check-unity-license.outputs.has_license == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - targetPlatform: StandaloneLinux64
+            customParameters: "-scriptingBackend Mono"
+          - targetPlatform: StandaloneWindows64
+            customParameters: "-scriptingBackend Mono"
+          - targetPlatform: StandaloneOSX
+            customParameters: "-scriptingBackend Mono"
+          - targetPlatform: Android
+            customParameters: "-scriptingBackend IL2CPP -enableE2ESmoke"
+          - targetPlatform: iOS
+            customParameters: "-scriptingBackend IL2CPP -enableE2ESmoke"
+    steps:
+      - name: Checkout repository (with Git LFS)
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Download Linux native plugin
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-astcenc-plugin
+          path: Assets/ASTC Encoder/Plugins
+
+      - name: Cache Unity Library
+        uses: actions/cache@v4
+        with:
+          path: Library
+          key: Library-${{ matrix.targetPlatform }}-${{ env.UNITY_VERSION }}-${{ hashFiles('Assets/**', 'Packages/**', 'ProjectSettings/**') }}
+          restore-keys: |
+            Library-${{ matrix.targetPlatform }}-${{ env.UNITY_VERSION }}-
+            Library-${{ matrix.targetPlatform }}-
+
+      - name: Build Unity Player for ${{ matrix.targetPlatform }}
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+          UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+        with:
+          unityVersion: ${{ env.UNITY_VERSION }}
+          targetPlatform: ${{ matrix.targetPlatform }}
+          buildName: ASTCEncoder
+          versioning: None
+          allowDirtyBuild: true
+          buildMethod: Aperture.Astcenc.Editor.CIBuildScript.Build
+          customParameters: ${{ matrix.customParameters }}
+
+      - name: Upload ${{ matrix.targetPlatform }} build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.targetPlatform }}
+          path: build/${{ matrix.targetPlatform }}
+          retention-days: 7
+
+  e2e-linux:
+    name: E2E Player (Linux x64)
+    needs: build-players
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Linux64 build
+        uses: actions/download-artifact@v4
+        with:
+          name: build-StandaloneLinux64
+          path: build/StandaloneLinux64
+
+      - name: Run headless Linux Player E2E smoke test
+        run: |
+          BIN="$(find build/StandaloneLinux64 -maxdepth 2 -type f \( -name 'ASTCEncoder.x86_64' -o -name 'ASTCEncoder' \) | head -n 1)"
+          if [[ -z "${BIN}" ]]; then
+            echo "ERROR: Linux player binary not found." >&2
+            find build/StandaloneLinux64 -maxdepth 3
+            exit 1
+          fi
+          chmod +x "${BIN}"
+          LOG_FILE="${PWD}/e2e-linux.log"
+          set +e
+          timeout 120 "${BIN}" -batchmode -nographics -logfile "${LOG_FILE}" -astc-e2e
+          STATUS=$?
+          set -e
+          cat "${LOG_FILE}"
+          if grep -q "ASTC_E2E_FAILED" "${LOG_FILE}"; then
+            echo "ERROR: ASTC_E2E_FAILED detected in Linux E2E log." >&2
+            exit 1
+          fi
+          grep -q "ASTC_E2E_PASSED" "${LOG_FILE}"
+          if [[ "${STATUS}" -ne 0 && "${STATUS}" -ne 139 ]]; then
+            echo "ERROR: Linux player exited with unexpected status ${STATUS}" >&2
+            exit "${STATUS}"
+          fi
+
+  e2e-windows:
+    name: E2E Player (Windows x64)
+    needs: build-players
+    runs-on: windows-latest
+    steps:
+      - name: Download Windows64 build
+        uses: actions/download-artifact@v4
+        with:
+          name: build-StandaloneWindows64
+          path: build/StandaloneWindows64
+
+      - name: Run headless Windows Player E2E smoke test
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Path "build/StandaloneWindows64" -Filter "ASTCEncoder.exe" -Recurse | Select-Object -First 1
+          if (-not $exe) {
+            Write-Error "Windows player executable ASTCEncoder.exe not found."
+            Get-ChildItem -Path "build/StandaloneWindows64" -Recurse
+            exit 1
+          }
+          $logFile = Join-Path (Get-Location) "e2e-windows.log"
+          $proc = Start-Process -FilePath $exe.FullName -ArgumentList "-batchmode", "-nographics", "-logfile", $logFile, "-astc-e2e" -NoNewWindow -Wait -PassThru
+          if (Test-Path $logFile) {
+            Get-Content $logFile
+          }
+          if ($proc.ExitCode -ne 0) {
+            Write-Error "Windows player exited with code $($proc.ExitCode)"
+            exit $proc.ExitCode
+          }
+          if (-not (Select-String -Path $logFile -Pattern "ASTC_E2E_PASSED" -Quiet)) {
+            Write-Error "ASTC_E2E_PASSED marker not found in log."
+            exit 1
+          }
+
+  e2e-macos:
+    name: E2E Player (macOS Universal)
+    needs: build-players
+    runs-on: macos-latest
+    steps:
+      - name: Download macOS build
+        uses: actions/download-artifact@v4
+        with:
+          name: build-StandaloneOSX
+          path: build/StandaloneOSX
+
+      - name: Run headless macOS Player E2E smoke test
+        run: |
+          APP="$(find build/StandaloneOSX -maxdepth 2 -type d -name '*.app' | head -n 1)"
+          if [[ -z "${APP}" ]]; then
+            echo "ERROR: macOS .app bundle not found." >&2
+            find build/StandaloneOSX -maxdepth 3
+            exit 1
+          fi
+          BIN="$(find "${APP}/Contents/MacOS" -maxdepth 1 -type f | head -n 1)"
+          chmod +x "${BIN}"
+          xattr -dr com.apple.quarantine "${APP}" || true
+          LOG_FILE="${PWD}/e2e-macos.log"
+          set +e
+          "${BIN}" -batchmode -nographics -logfile "${LOG_FILE}" -astc-e2e
+          STATUS=$?
+          set -e
+          cat "${LOG_FILE}"
+          if grep -q "ASTC_E2E_FAILED" "${LOG_FILE}"; then
+            echo "ERROR: ASTC_E2E_FAILED detected in macOS E2E log." >&2
+            exit 1
+          fi
+          grep -q "ASTC_E2E_PASSED" "${LOG_FILE}"
+          if [[ "${STATUS}" -ne 0 ]]; then
+            echo "ERROR: macOS player exited with status ${STATUS}" >&2
+            exit "${STATUS}"
+          fi
+
+  e2e-android:
+    name: E2E Player (Android ARM64)
+    needs: build-players
+    runs-on: macos-latest
+    steps:
+      - name: Download Android APK
+        uses: actions/download-artifact@v4
+        with:
+          name: build-Android
+          path: build/Android
+
+      - name: Verify APK native libraries (arm64-v8a)
+        run: |
+          APK="$(find build/Android -name '*.apk' | head -n 1)"
+          if [[ -z "${APK}" ]]; then
+            echo "ERROR: Android APK not found." >&2
+            find build/Android -maxdepth 3
+            exit 1
+          fi
+          echo "APK_PATH=${APK}" >> "$GITHUB_ENV"
+          unzip -l "${APK}" | grep "lib/arm64-v8a/libastcenc-neon-shared.so"
+          unzip -l "${APK}" | grep "lib/arm64-v8a/libil2cpp.so"
+
+      - name: Run APK on Android ARM64 Emulator
+        if: ${{ inputs.run_android_emulator != false }}
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 33
+          arch: arm64-v8a
+          target: default
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          script: |
+            adb logcat -c
+            adb install -r "${APK_PATH}"
+            adb shell am start -n com.DefaultCompany.ASTCEncoder/com.unity3d.player.UnityPlayerActivity
+            for i in $(seq 1 45); do
+              LOGS="$(adb logcat -d -s Unity:V)"
+              if grep -q "ASTC_E2E_PASSED" <<< "${LOGS}"; then
+                echo "${LOGS}"
+                echo "Android ARM64 E2E passed!"
+                exit 0
+              fi
+              if grep -q "ASTC_E2E_FAILED" <<< "${LOGS}"; then
+                echo "${LOGS}"
+                echo "ERROR: Android ARM64 E2E failed!" >&2
+                exit 1
+              fi
+              sleep 2
+            done
+            echo "ERROR: Timed out waiting for ASTC_E2E_PASSED in adb logcat." >&2
+            adb logcat -d -s Unity:V
+            exit 1
+
+  e2e-ios-xcodebuild:
+    name: E2E Link & Build (iOS Xcode ARM64)
+    needs: build-players
+    runs-on: macos-latest
+    steps:
+      - name: Download iOS Xcode project
+        uses: actions/download-artifact@v4
+        with:
+          name: build-iOS
+          path: build/iOS
+
+      - name: Verify iOS static library and compile with xcodebuild
+        run: |
+          XCODEPROJ="$(find build/iOS -maxdepth 3 -name 'Unity-iPhone.xcodeproj' | head -n 1)"
+          if [[ -z "${XCODEPROJ}" ]]; then
+            echo "ERROR: Unity-iPhone.xcodeproj not found." >&2
+            find build/iOS -maxdepth 3
+            exit 1
+          fi
+          PROJECT_DIR="$(dirname "${XCODEPROJ}")"
+          find "${PROJECT_DIR}" -name 'libastcenc-neon-static.a' | grep -q 'libastcenc-neon-static.a'
+          xcodebuild \
+            -project "${XCODEPROJ}" \
+            -scheme Unity-iPhone \
+            -sdk iphoneos \
+            -configuration Release \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build

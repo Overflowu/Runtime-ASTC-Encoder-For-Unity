@@ -165,7 +165,7 @@ namespace Aperture.Astcenc.Runtime
         private static readonly object s_Lock = new object();
         private static readonly Dictionary<CompressorKey, Stack<AstcContext>> s_Compressors = new Dictionary<CompressorKey, Stack<AstcContext>>();
         private static readonly Dictionary<DecompressorKey, Stack<AstcContext>> s_Decompressors = new Dictionary<DecompressorKey, Stack<AstcContext>>();
-        private static readonly Dictionary<BlockSize, AstcContext> s_Parents = new Dictionary<BlockSize, AstcContext>();
+        private static readonly Dictionary<CompressorKey, AstcContext> s_Parents = new Dictionary<CompressorKey, AstcContext>();
         private static readonly List<AstcContext> s_RetiredParents = new List<AstcContext>();
         private static int s_Generation;
         private static int s_InFlightCompressors;
@@ -190,6 +190,7 @@ namespace Aperture.Astcenc.Runtime
             bool useUnityJobSystem = false)
         {
             var key = new CompressorKey(format, textureType, blockSize, quality, threadCount, useAlphaWeight, usePerceptual, alphaScaleRadius);
+            var parentKey = new CompressorKey(format, textureType, blockSize, quality, 1, useAlphaWeight, usePerceptual, alphaScaleRadius);
             lock (s_Lock)
             {
                 int gen = s_Generation;
@@ -201,11 +202,11 @@ namespace Aperture.Astcenc.Runtime
                     return new CompressorLease(key, pooled, gen);
                 }
 
-                if (!s_Parents.TryGetValue(blockSize, out AstcContext parent))
+                if (!s_Parents.TryGetValue(parentKey, out AstcContext parent))
                 {
-                    parent = AstcContext.Create(format, textureType, blockSize, quality, threadCount, useAlphaWeight, usePerceptual, alphaScaleRadius);
+                    parent = AstcContext.Create(format, textureType, blockSize, quality, 1, useAlphaWeight, usePerceptual, alphaScaleRadius);
                     if (parent != null)
-                        s_Parents[blockSize] = parent;
+                        s_Parents[parentKey] = parent;
                 }
 
                 AstcContext created = AstcContext.Create(
