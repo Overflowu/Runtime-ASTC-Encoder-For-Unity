@@ -207,6 +207,29 @@ float4 AstcChannelMaskEx(uint effMode, uint excludedChannel)
     return m;
 }
 
+// Canonicalizes endpoint order so hardware decoding (LDR CEM 8/12 blue-contraction
+// avoidance and HDR CEM 11/14/15 major-component delta modes) does not invert weights
+// that were projected prior to endpoint quantization.
+void AstcCanonicalizeEndpoints(uint effMode, inout float4 e0, inout float4 e1)
+{
+    if (effMode == ASTC_EFF_LDR_RGB || effMode == ASTC_EFF_LDR_RGBA)
+    {
+        if ((e0.r + e0.g + e0.b) > (e1.r + e1.g + e1.b))
+        {
+            float4 tmp = e0; e0 = e1; e1 = tmp;
+        }
+    }
+    else if (effMode >= ASTC_EFF_HDR_RGB)
+    {
+        float maxRgb0 = max(e0.r, max(e0.g, e0.b));
+        float maxRgb1 = max(e1.r, max(e1.g, e1.b));
+        if (maxRgb0 > maxRgb1)
+        {
+            float4 tmp = e0; e0 = e1; e1 = tmp;
+        }
+    }
+}
+
 // Quantizes one partition's endpoints (e0, e1) according to effMode and epQuant.
 // Writes codes into g_AstcEpCodes[codeOffset..] and returns exact hardware-reconstructed uqE0, uqE1.
 void AstcQuantizeEndpoints(
@@ -216,10 +239,12 @@ void AstcQuantizeEndpoints(
     uint epQuant,
     uint codeOffset,
     out float4 uqE0,
-    out float4 uqE1)
+    out float4 uqE1,
+    out bool swapped)
 {
     uqE0 = float4(0.0, 0.0, 0.0, 255.0);
     uqE1 = float4(0.0, 0.0, 0.0, 255.0);
+    swapped = false;
 
     if (effMode == ASTC_EFF_LDR_NORMAL)
     {
@@ -265,6 +290,7 @@ void AstcQuantizeEndpoints(
         // Guarantee s1 >= s0 so hardware always decodes direct endpoints without unexpected contraction/inversion.
         if ((g_AstcEpUqArr[0] + g_AstcEpUqArr[2] + g_AstcEpUqArr[4]) > (g_AstcEpUqArr[1] + g_AstcEpUqArr[3] + g_AstcEpUqArr[5]))
         {
+            swapped = true;
             [loop] for (uint s = 0u; s < 8u; s += 2u)
             {
                 uint tc = g_AstcEpCArr[s]; g_AstcEpCArr[s] = g_AstcEpCArr[s + 1u]; g_AstcEpCArr[s + 1u] = tc;
@@ -288,6 +314,7 @@ void AstcQuantizeEndpoints(
     float maxRgb1 = max(e1.r, max(e1.g, e1.b));
     if (maxRgb0 > maxRgb1)
     {
+        swapped = true;
         float4 tmp = e0; e0 = e1; e1 = tmp;
     }
 
@@ -506,6 +533,7 @@ void AstcFitSubsetEndpoints(
         e1 = AstcSetChannel(e1, excludedChannel, AstcGetChannel(maxC, excludedChannel));
     }
 
+    AstcCanonicalizeEndpoints(effMode, e0, e1);
     outE0 = e0;
     outE1 = e1;
 }
@@ -739,14 +767,16 @@ float AstcEvalCandidateError(
     uint partCnt = isTwoP ? 2u : 1u;
 
     float4 uq0_p0 = 0.0, uq1_p0 = 0.0, uq0_p1 = 0.0, uq1_p1 = 0.0;
+    bool swap0 = false, swap1 = false;
     [loop] for (uint pi = 0u; pi < partCnt; ++pi)
     {
         float4 te0 = (pi == 0u) ? e0_p0 : e0_p1;
         float4 te1 = (pi == 0u) ? e1_p0 : e1_p1;
         float4 uq0, uq1;
-        AstcQuantizeEndpoints(te0, te1, effMode, epQuant, pi * epPerPart, uq0, uq1);
-        if (pi == 0u) { uq0_p0 = uq0; uq1_p0 = uq1; }
-        else          { uq0_p1 = uq0; uq1_p1 = uq1; }
+        bool sw;
+        AstcQuantizeEndpoints(te0, te1, effMode, epQuant, pi * epPerPart, uq0, uq1, sw);
+        if (pi == 0u) { uq0_p0 = uq0; uq1_p0 = uq1; swap0 = sw; }
+        else          { uq0_p1 = uq0; uq1_p1 = uq1; swap1 = sw; }
     }
 
     uint gridCount = gridW * gridH;
@@ -785,18 +815,21 @@ float AstcEvalCandidateError(
             if (isTwoP)
             {
                 uint part = AstcEvalPartition2(p2, x, y);
+                uint effW0 = ((part == 0u) ? swap0 : swap1) ? (64u - w0) : w0;
                 recon = (part == 0u)
-                    ? lerp(uq0_p0, uq1_p0, (float)w0 * (1.0 / 64.0))
-                    : lerp(uq0_p1, uq1_p1, (float)w0 * (1.0 / 64.0));
+                    ? lerp(uq0_p0, uq1_p0, (float)effW0 * (1.0 / 64.0))
+                    : lerp(uq0_p1, uq1_p1, (float)effW0 * (1.0 / 64.0));
             }
             else
             {
-                recon = lerp(uq0_p0, uq1_p0, (float)w0 * (1.0 / 64.0));
+                uint effW0 = swap0 ? (64u - w0) : w0;
+                recon = lerp(uq0_p0, uq1_p0, (float)effW0 * (1.0 / 64.0));
                 if (isDual)
                 {
                     uint w1;
                     ASTC_EVAL_INFILL(g_AstcGridUq1, x, y, BLOCK_X, BLOCK_Y, gridW, gridH, w1);
-                    float p1Val = lerp(AstcGetChannel(uq0_p0, ccs), AstcGetChannel(uq1_p0, ccs), (float)w1 * (1.0 / 64.0));
+                    uint effW1 = swap0 ? (64u - w1) : w1;
+                    float p1Val = lerp(AstcGetChannel(uq0_p0, ccs), AstcGetChannel(uq1_p0, ccs), (float)effW1 * (1.0 / 64.0));
                     recon = AstcSetChannel(recon, ccs, p1Val);
                 }
             }
@@ -933,6 +966,8 @@ void AstcFitBothPartitions2P(
     outE1_p0 = AstcClampWorkingColor(mean0 + axis0 * maxT0, effMode);
     outE0_p1 = AstcClampWorkingColor(mean1 + axis1 * minT1, effMode);
     outE1_p1 = AstcClampWorkingColor(mean1 + axis1 * maxT1, effMode);
+    AstcCanonicalizeEndpoints(effMode, outE0_p0, outE1_p0);
+    AstcCanonicalizeEndpoints(effMode, outE0_p1, outE1_p1);
 }
 
 // Unified post-quantization ideal endpoint refit for 1P single-plane and Dual-Plane blocks.
@@ -1054,7 +1089,8 @@ void AstcRefitEndpoints(
 
     [loop] for (uint sv = 0u; sv < 8u; ++sv) g_AstcCandEpCodes[sv] = g_AstcEpCodes[sv];
     float4 uq0, uq1;
-    AstcQuantizeEndpoints(refitE0, refitE1, effMode, epQuant, 0u, uq0, uq1);
+    bool dummySwapped;
+    AstcQuantizeEndpoints(refitE0, refitE1, effMode, epQuant, 0u, uq0, uq1, dummySwapped);
 
     float refitErr = 0.0;
     [loop] for (uint y2 = 0u; y2 < BLOCK_Y; ++y2)
@@ -1119,12 +1155,14 @@ uint4 AstcAssembleBlock(uint baseX, uint baseY, uint effMode, AstcCandidate c)
         float4 te0 = (pi == 0u) ? c.e0 : c.e0_p1;
         float4 te1 = (pi == 0u) ? c.e1 : c.e1_p1;
         float4 tu0, tu1;
-        AstcQuantizeEndpoints(te0, te1, effMode, c.epQuant, pi * epPerPart, tu0, tu1);
+        bool dummySwapped;
+        AstcQuantizeEndpoints(te0, te1, effMode, c.epQuant, pi * epPerPart, tu0, tu1, dummySwapped);
         if (pi == 0u) { uqE0 = tu0; uqE1 = tu1; }
         else          { uq0_p1 = tu0; uq1_p1 = tu1; }
     }
 #else
-    AstcQuantizeEndpoints(c.e0, c.e1, effMode, c.epQuant, 0u, uqE0, uqE1);
+    bool dummySwapped;
+    AstcQuantizeEndpoints(c.e0, c.e1, effMode, c.epQuant, 0u, uqE0, uqE1, dummySwapped);
 #endif
 
 #if !defined(ASTC_FAST_ONLY)
