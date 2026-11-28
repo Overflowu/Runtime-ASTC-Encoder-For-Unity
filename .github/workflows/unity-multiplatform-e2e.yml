@@ -176,6 +176,8 @@ jobs:
           unityVersion: ${{ env.UNITY_VERSION }}
           targetPlatform: ${{ matrix.targetPlatform }}
           buildName: ASTCEncoder
+          versioning: None
+          allowDirtyBuild: true
           buildMethod: Aperture.Astcenc.Editor.CIBuildScript.Build
           customParameters: ${{ matrix.customParameters }}
 
